@@ -3,18 +3,27 @@
 import AppKit
 import CoreGraphics
 
-// Brand-consistent slate background — the same one Rainy Day uses, so the two
-// savers look like siblings in the Applications folder — carrying a strip of
-// film in Palme d'Or gold, tilted off the horizontal so it reads as film
-// running rather than a gold bar. A warm projector glow sits behind it.
+// The Jorvik brand blue, carrying a strip of film in Palme d'Or gold, tilted
+// off the horizontal so it reads as film running rather than a gold bar.
+//
+// The background is the estate's standard icon plate: the #004080-family
+// gradient, corner radius 0.22, full bleed — the same plate Ballast,
+// QuitProtect and the Web Editor sit on. The first version of this icon
+// borrowed Rainy Day's dark grey instead, on the theory that the two
+// screensavers should look like siblings. Wrong axis: what makes a Jorvik icon
+// set a set is the brand plate, and one app opting out of it doesn't read as a
+// sibling, it reads as a stranger.
 //
 // Everything is derived from `s`, the icon's edge length, so the 16pt and
 // 1024pt renders are the same drawing rather than two drawings that happen to
 // resemble each other.
 
-let slateTop    = NSColor(srgbRed: 0x1F/255, green: 0x27/255, blue: 0x33/255, alpha: 1.0)
-let slateBottom = NSColor(srgbRed: 0x0E/255, green: 0x12/255, blue: 0x18/255, alpha: 1.0)
-let glow        = NSColor(srgbRed: 0xE8/255, green: 0xA4/255, blue: 0x5A/255, alpha: 1.0)
+/// The brand plate, top to bottom. The same pair every Jorvik icon uses.
+let brandTop    = NSColor(srgbRed: 0.05, green: 0.32, blue: 0.58, alpha: 1.0)
+let brandBottom = NSColor(srgbRed: 0.00, green: 0.20, blue: 0.42, alpha: 1.0)
+/// A cool highlight rather than the warm projector glow of the first version.
+/// Amber over blue turns to mud.
+let sheen       = NSColor(srgbRed: 0.45, green: 0.70, blue: 0.95, alpha: 1.0)
 let gold        = NSColor(srgbRed: 0xD9/255, green: 0xB0/255, blue: 0x4A/255, alpha: 1.0)
 let goldDeep    = NSColor(srgbRed: 0xA8/255, green: 0x7C/255, blue: 0x24/255, alpha: 1.0)
 
@@ -27,15 +36,15 @@ func drawIcon(size s: CGFloat) -> NSImage {
     }
     let space = CGColorSpaceCreateDeviceRGB()
 
-    // Rounded slate background.
-    let bgRect = NSRect(x: s * 0.04, y: s * 0.04, width: s * 0.92, height: s * 0.92)
-    let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: s * 0.18, yRadius: s * 0.18)
+    // The brand plate: full bleed, radius 0.22, as every other Jorvik icon.
+    let bgRect = NSRect(x: 0, y: 0, width: s, height: s)
+    let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: s * 0.22, yRadius: s * 0.22)
     ctx.saveGState()
     ctx.addPath(bgPath.cgPath)
     ctx.clip()
 
     if let bg = CGGradient(colorsSpace: space,
-                           colors: [slateTop.cgColor, slateBottom.cgColor] as CFArray,
+                           colors: [brandTop.cgColor, brandBottom.cgColor] as CFArray,
                            locations: [0.0, 1.0]) {
         ctx.drawLinearGradient(bg,
                                start: CGPoint(x: s / 2, y: s),
@@ -43,15 +52,16 @@ func drawIcon(size s: CGFloat) -> NSImage {
                                options: [])
     }
 
-    // Projector glow, low-left, warm.
+    // A soft highlight where the light falls, top left. Keeps the plate from
+    // reading as flat without introducing a second hue.
     if let halo = CGGradient(colorsSpace: space,
-                             colors: [glow.withAlphaComponent(0.34).cgColor,
-                                      glow.withAlphaComponent(0.0).cgColor] as CFArray,
+                             colors: [sheen.withAlphaComponent(0.30).cgColor,
+                                      sheen.withAlphaComponent(0.0).cgColor] as CFArray,
                              locations: [0.0, 1.0]) {
-        let centre = CGPoint(x: s * 0.32, y: s * 0.30)
+        let centre = CGPoint(x: s * 0.30, y: s * 0.74)
         ctx.drawRadialGradient(halo,
                                startCenter: centre, startRadius: 0,
-                               endCenter: centre, endRadius: s * 0.52,
+                               endCenter: centre, endRadius: s * 0.62,
                                options: [])
     }
 
@@ -61,8 +71,8 @@ func drawIcon(size s: CGFloat) -> NSImage {
     ctx.translateBy(x: s / 2, y: s / 2)
     ctx.rotate(by: -14 * .pi / 180)
 
-    let stripW = s * 0.86
-    let stripH = s * 0.42
+    let stripW = s * 0.78
+    let stripH = s * 0.40
     let strip = CGRect(x: -stripW / 2, y: -stripH / 2, width: stripW, height: stripH)
 
     // Strip body, with a slight vertical gradient so the gold has some depth.
@@ -92,7 +102,7 @@ func drawIcon(size s: CGFloat) -> NSImage {
     for i in 0..<frameCount {
         let x = strip.minX + gutter + (frameW + gutter) * CGFloat(i)
         let window = CGRect(x: x, y: strip.minY + margin, width: frameW, height: frameH)
-        ctx.setFillColor(slateBottom.withAlphaComponent(0.92).cgColor)
+        ctx.setFillColor(brandBottom.withAlphaComponent(0.94).cgColor)
         ctx.addPath(CGPath(roundedRect: window,
                            cornerWidth: s * 0.012, cornerHeight: s * 0.012,
                            transform: nil))
@@ -104,7 +114,7 @@ func drawIcon(size s: CGFloat) -> NSImage {
         let holeX = window.midX - holeW / 2
         for holeY in [strip.minY + (margin - holeH) / 2,
                       strip.maxY - margin + (margin - holeH) / 2] {
-            ctx.setFillColor(slateBottom.withAlphaComponent(0.85).cgColor)
+            ctx.setFillColor(brandBottom.withAlphaComponent(0.88).cgColor)
             ctx.addPath(CGPath(roundedRect: CGRect(x: holeX, y: holeY, width: holeW, height: holeH),
                                cornerWidth: holeH / 2, cornerHeight: holeH / 2,
                                transform: nil))
