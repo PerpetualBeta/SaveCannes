@@ -48,6 +48,13 @@ final class VideoStage: NSView {
     private var currentCaption: (title: String, copyright: String?)?
     private var titleTimer: Timer?
 
+    /// Watchdog state: the item's stated duration, the playhead at the last
+    /// look, and how long it has read the same value.
+    private var watchdog: Timer?
+    private var currentDurationSeconds: Double?
+    private var lastPlayhead: Double?
+    private var frozenSeconds: TimeInterval = 0
+
     /// Remaining candidates for this pass. Refilled when it empties, so
     /// playback loops forever: reshuffled each pass in random order, same
     /// sequence every pass in sequential order.
@@ -104,6 +111,7 @@ final class VideoStage: NSView {
     deinit {
         detachItem()
         titleTimer?.invalidate()
+        watchdog?.invalidate()
     }
 
     // MARK: - Lifecycle
@@ -123,6 +131,9 @@ final class VideoStage: NSView {
     func pause() {
         player.pause()
         stopTitleTimer()
+        // A paused playhead is motionless by definition; leaving the watchdog
+        // armed here would have it "rescue" us from our own lock screen.
+        stopWatchdog()
     }
 
     /// Tear playback down. The player is emptied rather than just paused so
@@ -134,6 +145,7 @@ final class VideoStage: NSView {
         detachItem()
         stopTitleTimer()
         overlay.cancel()
+        currentDurationSeconds = nil
         currentCaption = nil
         player.replaceCurrentItem(with: nil)
         queue.removeAll()
@@ -213,11 +225,19 @@ final class VideoStage: NSView {
 
         hideNotice()
         currentPixelSize = size
+        // Stated duration, for the watchdog. `.indefinite` (a stream) and a
+        // missing value both leave it nil, which turns off the reached-the-end
+        // half of the watchdog and leaves the frozen-playhead half doing the
+        // work — the right way round, since a duration you can't trust
+        // shouldn't be used to cut a film off.
+        let stated = try? await asset.load(.duration)
+        currentDurationSeconds = (stated?.isNumeric ?? false) ? CMTimeGetSeconds(stated!) : nil
         let item = AVPlayerItem(asset: asset)
         attach(item)
         player.replaceCurrentItem(with: item)
         layoutPlayerLayer()
         player.play()
+        startWatchdog()
         scLog("playing \(url.lastPathComponent) (\(Int(size.width))×\(Int(size.height)))")
 
         // Metadata is read after playback starts rather than before it: the
@@ -242,6 +262,115 @@ final class VideoStage: NSView {
         let (natural, transform) = try await track.load(.naturalSize, .preferredTransform)
         let oriented = natural.applying(transform)
         return CGSize(width: abs(oriented.width), height: abs(oriented.height))
+    }
+
+    // MARK: - Stall watchdog
+
+    /// What the watchdog thinks of the current state of play.
+    enum StallVerdict: Equatable {
+        case keepPlaying
+        /// The playhead is sitting at the end but no end-of-play notification
+        /// ever arrived. Advance now.
+        case finishedSilently
+        /// The playhead hasn't moved for a long time although the player
+        /// believes it is playing. Advance and log it.
+        case frozen
+    }
+
+    /// How often the watchdog looks.
+    private static let watchdogTickSeconds: TimeInterval = 2
+    /// How close to the stated end counts as "at the end".
+    private static let endEpsilonSeconds: Double = 0.5
+    /// How long the playhead must sit at the end before the watchdog decides
+    /// no notification is coming.
+    ///
+    /// Load-bearing. Every video's playhead passes through the last half-second
+    /// legitimately, and `didPlayToEndTime` arrives within milliseconds of it —
+    /// so without this grace the watchdog would race the notification and
+    /// advance early on a good fraction of perfectly healthy videos, clipping
+    /// their final moments. A safety net that participates in normal operation
+    /// isn't a safety net. Two ticks is far longer than the notification ever
+    /// takes, and on a healthy item the watchdog is disarmed by `detachItem()`
+    /// long before it could count that high.
+    private static let endGraceSeconds: TimeInterval = 4
+    /// How long a motionless playhead is tolerated before the video is written
+    /// off. Deliberately generous: a file on a sleeping external drive or a
+    /// network volume can legitimately stall for several seconds, and cutting
+    /// a good film short would be a worse bug than the one being guarded
+    /// against. Half a minute of a frozen picture is broken by any standard.
+    private static let stallLimitSeconds: TimeInterval = 30
+
+    /// The whole policy, as a pure function — no player, no timer, no clock.
+    /// Separated out so each branch can be tested directly rather than by
+    /// trying to manufacture a wedged decoder.
+    ///
+    /// - Parameters:
+    ///   - playheadSeconds: where the playhead is now.
+    ///   - durationSeconds: the item's stated duration, or nil when it can't
+    ///     be trusted.
+    ///   - frozenSeconds: how long the playhead has read the same value.
+    ///   - shouldBePlaying: whether the player intends to be moving. False
+    ///     while we've deliberately paused, which must never count as a stall.
+    static func stallVerdict(playheadSeconds: Double,
+                             durationSeconds: Double?,
+                             frozenSeconds: TimeInterval,
+                             shouldBePlaying: Bool) -> StallVerdict {
+        guard shouldBePlaying else { return .keepPlaying }
+        if let duration = durationSeconds, duration > 0,
+           playheadSeconds >= duration - endEpsilonSeconds,
+           frozenSeconds >= endGraceSeconds {
+            return .finishedSilently
+        }
+        if frozenSeconds >= stallLimitSeconds { return .frozen }
+        return .keepPlaying
+    }
+
+    private func startWatchdog() {
+        stopWatchdog()
+        lastPlayhead = nil
+        frozenSeconds = 0
+        watchdog = Timer.scheduledTimer(withTimeInterval: Self.watchdogTickSeconds,
+                                        repeats: true) { [weak self] _ in
+            self?.watchdogTick()
+        }
+    }
+
+    private func stopWatchdog() {
+        watchdog?.invalidate()
+        watchdog = nil
+    }
+
+    /// The plumbing: measure, ask `stallVerdict`, act.
+    private func watchdogTick() {
+        guard running, player.currentItem != nil else { return }
+        let playhead = CMTimeGetSeconds(player.currentTime())
+        // A paused player is us, not a fault — see `pause()`, which stops the
+        // watchdog outright. This is the belt to that braces.
+        let shouldBePlaying = player.timeControlStatus != .paused
+
+        if let last = lastPlayhead, last == playhead, shouldBePlaying {
+            frozenSeconds += Self.watchdogTickSeconds
+        } else {
+            frozenSeconds = 0
+        }
+        lastPlayhead = playhead
+
+        switch Self.stallVerdict(playheadSeconds: playhead,
+                                 durationSeconds: currentDurationSeconds,
+                                 frozenSeconds: frozenSeconds,
+                                 shouldBePlaying: shouldBePlaying) {
+        case .keepPlaying:
+            return
+        case .finishedSilently:
+            scLog("watchdog: playhead reached the end with no end-of-play notification — advancing")
+            playNext()
+        case .frozen:
+            scLog("watchdog: playhead frozen at \(String(format: "%.1f", playhead))s for \(Int(frozenSeconds))s — advancing")
+            // A file that wedges the decoder has failed, whatever its header
+            // claimed, so it counts against the all-dead-source guard.
+            failuresSinceLastSuccess += 1
+            playNext()
+        }
     }
 
     // MARK: - Title caption
@@ -347,6 +476,8 @@ final class VideoStage: NSView {
     }
 
     private func detachItem() {
+        // Armed again by `present()` for the next item.
+        stopWatchdog()
         statusObservation?.invalidate()
         statusObservation = nil
         for obs in itemObservers { NotificationCenter.default.removeObserver(obs) }

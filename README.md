@@ -45,6 +45,7 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 - **One file** plays on loop.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
+- **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
 - **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
 
 ## Configuration
@@ -103,6 +104,19 @@ The text is the video's **own embedded title** when the file carries one, and it
 
 Captions are drawn with a soft shadow, because a video screensaver can't know what it's drawing over and white-on-white is otherwise a real possibility on the wrong shot.
 
+### If a video wedges
+
+Left alone, every video plays from beginning to end; the only things that cut one short are your own input, waking or unlocking the Mac, and a display being added, removed or reconfigured (which rebuilds the windows and restarts playback).
+
+Behind that there's a watchdog, for the one case that would otherwise leave you looking at a still frame indefinitely: a file that plays but never reports that it finished. Twice a minute the watchdog compares the playhead against where it was, and steps in only when the picture has genuinely stopped —
+
+- **parked at the end** for four seconds with no end-of-play notification, or
+- **frozen anywhere** for thirty seconds while the player still believes it's playing.
+
+Both thresholds are deliberately unhurried. A file on a sleeping external drive or a network volume can legitimately stall for several seconds, and cutting a good film short would be a worse fault than the one being guarded against. A video we've paused ourselves — behind the lock screen — is never treated as stalled. In normal playback the watchdog never acts at all: it doesn't fire once across a full pass of a test folder, and no clip loses so much as a frame to it.
+
+Interventions are logged, so if it ever does fire you can find out which file did it (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES`).
+
 ### Screenshots
 
 Set a hotkey under Settings → Capture and press it while the saver is playing. The frame is written to `~/Pictures/Save Cannes/` as a PNG.
@@ -158,6 +172,8 @@ Save Cannes builds via the shared Jorvik `release.mk`. With the `jorvik-release`
 **The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
 
 **No sound.** Check Settings → Video, and note that with multiple displays the soundtrack plays on the main display's copy only.
+
+**A video seems to end early.** Turn logging on and look for `watchdog:` lines — the watchdog only moves on when the playhead has genuinely stopped, and it names the moment it did. If there are no such lines, the file ended where it says it ends; check its duration in Finder's Get Info.
 
 ---
 
