@@ -91,8 +91,8 @@ func drawIcon(size s: CGFloat) -> NSImage {
     }
     ctx.restoreGState()
 
-    // Frames — three windows of slate punched out of the gold, and the
-    // sprocket holes above and below them.
+    // Frames — three windows punched out of the gold, showing the plate
+    // through, and the sprocket holes above and below them.
     let frameCount = 3
     let margin = stripH * 0.22          // depth of the sprocket rails
     let gutter = stripW * 0.035
