@@ -140,6 +140,8 @@ final class ScreensaverWindow {
         stage.soundEnabled = audioEnabled
         stage.sharedPlaylist = sharedPlaylist
         stage.startOffset = startOffset
+        stage.titleMode = TitleMode(rawValue: defs.integer(forKey: "titleMode")) ?? .atStart
+        stage.titleRepeatMinutes = defs.integer(forKey: "titleRepeatMinutes")
 
         container.addSubview(stage)
         scLog("ScreensaverWindow built for \(screen.localizedName), audio=\(audioEnabled)")

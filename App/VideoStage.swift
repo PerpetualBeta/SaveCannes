@@ -35,9 +35,18 @@ final class VideoStage: NSView {
     /// would begin at the first file and play the same one.
     var startOffset = 0
 
+    var titleMode: TitleMode = .atStart
+    /// Gap between repeats in `.repeatedly` mode.
+    var titleRepeatMinutes = 5
+
     private let player = AVPlayer()
     private let playerLayer = AVPlayerLayer()
     private var notice: NSTextField?
+    private let overlay = TitleOverlay(frame: .zero)
+    /// What the caption should say for the item playing now, kept so the
+    /// periodic repeat has something to re-show.
+    private var currentCaption: (title: String, copyright: String?)?
+    private var titleTimer: Timer?
 
     /// Remaining candidates for this pass. Refilled when it empties, so
     /// playback loops forever: reshuffled each pass in random order, same
@@ -66,12 +75,35 @@ final class VideoStage: NSView {
         playerLayer.player = player
         playerLayer.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(playerLayer)
+        // Sized here, and again in `layout()`. An autoresizing mask alone
+        // isn't enough: it only fires when the superview *changes* size, and
+        // this view is created at its final size, so a subview added at
+        // .zero would stay at .zero and the caption would never be drawn.
+        // Cost me a caption that logged perfectly and rendered nothing.
+        overlay.frame = bounds
+        overlay.autoresizingMask = [.width, .height]
+        addSubview(overlay)
+        keepVideoBehind()
+    }
+
+    /// Force the video layer to the back of the layer tree.
+    ///
+    /// `playerLayer` is added directly to this view's layer, while the caption
+    /// and the notice are ordinary subviews whose layers AppKit inserts into
+    /// the same tree. Relying on the order AppKit happens to choose between the
+    /// two would be relying on an implementation detail — and losing that bet
+    /// means the caption renders *under* the picture, i.e. invisibly. Pinning
+    /// the video at index 0 settles it.
+    private func keepVideoBehind() {
+        guard let layer = layer, playerLayer.superlayer === layer else { return }
+        layer.insertSublayer(playerLayer, at: 0)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
     deinit {
         detachItem()
+        titleTimer?.invalidate()
     }
 
     // MARK: - Lifecycle
@@ -90,6 +122,7 @@ final class VideoStage: NSView {
     /// down on unlock.
     func pause() {
         player.pause()
+        stopTitleTimer()
     }
 
     /// Tear playback down. The player is emptied rather than just paused so
@@ -99,6 +132,9 @@ final class VideoStage: NSView {
         running = false
         player.pause()
         detachItem()
+        stopTitleTimer()
+        overlay.cancel()
+        currentCaption = nil
         player.replaceCurrentItem(with: nil)
         queue.removeAll()
         currentPixelSize = nil
@@ -183,6 +219,13 @@ final class VideoStage: NSView {
         layoutPlayerLayer()
         player.play()
         scLog("playing \(url.lastPathComponent) (\(Int(size.width))×\(Int(size.height)))")
+
+        // Metadata is read after playback starts rather than before it: the
+        // picture is the point, and a caption arriving a moment into the film
+        // is better than holding the film back to look up its title.
+        currentCaption = await Self.caption(for: asset, url: url)
+        showCaption()
+        startTitleTimer()
     }
 
     private func skip(_ url: URL, because reason: String) {
@@ -199,6 +242,55 @@ final class VideoStage: NSView {
         let (natural, transform) = try await track.load(.naturalSize, .preferredTransform)
         let oriented = natural.applying(transform)
         return CGSize(width: abs(oriented.width), height: abs(oriented.height))
+    }
+
+    // MARK: - Title caption
+
+    /// The title to show, and the copyright line if the file carries one.
+    ///
+    /// A file's embedded title is used when it has one; otherwise the filename
+    /// without its extension, which for most people's own videos is the only
+    /// title there is. Never the full path — nobody wants their folder
+    /// structure projected on a wall.
+    private static func caption(for asset: AVURLAsset, url: URL) async -> (title: String, copyright: String?) {
+        let filename = url.deletingPathExtension().lastPathComponent
+        guard let metadata = try? await asset.load(.commonMetadata) else {
+            return (filename, nil)
+        }
+        let title = await string(metadata, .commonIdentifierTitle)
+        let copyright = await string(metadata, .commonIdentifierCopyrights)
+        return (title?.isEmpty == false ? title! : filename, copyright)
+    }
+
+    private static func string(_ items: [AVMetadataItem], _ identifier: AVMetadataIdentifier) async -> String? {
+        guard let item = AVMetadataItem.metadataItems(from: items,
+                                                      filteredByIdentifier: identifier).first,
+              let value = try? await item.load(.stringValue)
+        else { return nil }
+        return value
+    }
+
+    private func showCaption() {
+        guard titleMode != .never, let caption = currentCaption else { return }
+        scLog("caption: \(caption.title)" + (caption.copyright.map { " · \($0)" } ?? ""))
+        overlay.show(title: caption.title, copyright: caption.copyright)
+    }
+
+    /// Re-show the caption every few minutes in `.repeatedly` mode. Restarted
+    /// for each item, so the gap is measured from the moment that item began
+    /// rather than from some earlier one.
+    private func startTitleTimer() {
+        stopTitleTimer()
+        guard titleMode == .repeatedly else { return }
+        let minutes = max(1, min(60, titleRepeatMinutes))
+        titleTimer = Timer.scheduledTimer(withTimeInterval: Double(minutes) * 60, repeats: true) { [weak self] _ in
+            self?.showCaption()
+        }
+    }
+
+    private func stopTitleTimer() {
+        titleTimer?.invalidate()
+        titleTimer = nil
     }
 
     private enum StageError: LocalizedError {
@@ -267,6 +359,7 @@ final class VideoStage: NSView {
         super.layout()
         layoutPlayerLayer()
         layoutNotice()
+        overlay.frame = bounds
     }
 
     private func layoutPlayerLayer() {
@@ -338,6 +431,7 @@ final class VideoStage: NSView {
             field.drawsBackground = false
             field.isSelectable = false
             addSubview(field)
+            keepVideoBehind()
             notice = field
         }
         notice?.stringValue = text

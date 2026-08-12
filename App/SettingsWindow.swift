@@ -27,6 +27,8 @@ struct SaveCannesSettingsContent: View {
     @AppStorage("videoScaling")   private var scaling: VideoScaling = .fullScreen
     @AppStorage("soundEnabled")   private var soundEnabled: Bool = false
     @AppStorage("differentVideoPerDisplay") private var differentVideoPerDisplay: Bool = true
+    @AppStorage("titleMode")          private var titleMode: TitleMode = .atStart
+    @AppStorage("titleRepeatMinutes") private var titleRepeatMinutes: Int = 5
     @AppStorage("idleMinutes")    private var idleMinutes: Int = 5
     @AppStorage("lockOnDismiss")  private var lockOnDismiss: Bool = false
 
@@ -117,6 +119,30 @@ struct SaveCannesSettingsContent: View {
                    isOn: differentPerDisplayBinding)
                 .disabled(!order.allowsDifferentVideoPerDisplay)
             Text(differentPerDisplayNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section(L10n.string("settings.titles", defaultValue: "Titles")) {
+            Picker(L10n.string("settings.show_title", defaultValue: "Show title:"), selection: $titleMode) {
+                Text(L10n.string("settings.title_never", defaultValue: "Never"))
+                    .tag(TitleMode.never)
+                Text(L10n.string("settings.title_at_start", defaultValue: "As each video starts"))
+                    .tag(TitleMode.atStart)
+                Text(L10n.string("settings.title_repeatedly", defaultValue: "Repeatedly, while it plays"))
+                    .tag(TitleMode.repeatedly)
+            }
+            HStack {
+                Text(L10n.string("settings.title_repeat_every", defaultValue: "Repeat every:"))
+                TextField("", value: $titleRepeatMinutes, formatter: Self.minutes(min: 1, max: 60))
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                Text(L10n.string("settings.minutes", defaultValue: "minutes"))
+                Spacer()
+            }
+            .disabled(titleMode != .repeatedly)
+            Text(L10n.string("settings.title_note",
+                             defaultValue: "The video's own title if it has one, otherwise its filename, low in the corner for a few seconds. A copyright line is shown underneath when the file carries one."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

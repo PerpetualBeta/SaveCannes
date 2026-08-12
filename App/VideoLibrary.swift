@@ -17,6 +17,16 @@ enum PlaybackOrder: Int {
     var allowsDifferentVideoPerDisplay: Bool { self == .random }
 }
 
+/// When the title caption appears.
+enum TitleMode: Int {
+    case never = 0
+    /// Once, as each video begins.
+    case atStart = 1
+    /// As each video begins, and again every few minutes while it plays — for
+    /// a screen an audience wanders past rather than sits in front of.
+    case repeatedly = 2
+}
+
 /// How each video is fitted to the display it plays on.
 enum VideoScaling: Int {
     /// Fill the display; overflow on the long axis is cropped away.

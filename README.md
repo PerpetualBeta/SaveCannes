@@ -54,6 +54,7 @@ Click the menu bar icon → **Settings…** for:
 - **Permissions** — accessibility status (required only if you enable Lock Screen on dismiss)
 - **Video** — the source (a file or a folder, with a count of what was found), playback order, and sound
 - **Display** — how each video is fitted to the screen, and whether every display shows the same one
+- **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, and a global "Play now" hotkey
 - **On dismiss** — toggle to lock the screen automatically when the saver dismisses
 - **Capture** — global hotkey to save the current frame to `~/Pictures/Save Cannes/`
@@ -90,6 +91,18 @@ Off by default — a screensaver that starts talking to an empty room is nobody'
 
 With more than one display, sound plays on the main display only. Each display runs its own playback, so sound on all of them would mean the same soundtrack two or three times over, a few frames apart.
 
+### Titles
+
+A caption low in the corner tells you what's playing. It fades in, holds for a few seconds, and fades out.
+
+- **Never** — no caption.
+- **As each video starts** — once, as each new video begins. The default.
+- **Repeatedly, while it plays** — as it begins, and again every few minutes (1–60, your choice) for as long as that video runs. For a screen people wander past rather than sit in front of.
+
+The text is the video's **own embedded title** when the file carries one, and its filename without the extension when it doesn't — which for most people's own footage is the only title there is. Never the full path; nobody wants their folder structure projected on a wall. If the file carries a copyright line, that's shown underneath in smaller type.
+
+Captions are drawn with a soft shadow, because a video screensaver can't know what it's drawing over and white-on-white is otherwise a real possibility on the wrong shot.
+
 ### Screenshots
 
 Set a hotkey under Settings → Capture and press it while the saver is playing. The frame is written to `~/Pictures/Save Cannes/` as a PNG.
@@ -110,7 +123,7 @@ Updates are EdDSA-signed; your copy will only install genuine Jorvik Software re
 
 ## Architecture
 
-- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), source resolution (`VideoLibrary`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration.
+- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), source resolution (`VideoLibrary`), the title caption (`TitleOverlay`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration.
 - **JorvikKit** (`App/JorvikKit/`) — vendored shared components from the Jorvik suite (About modal, Settings frame, shortcut recorder, Sparkle focus guard, localisation shim, window helper).
 - **Sparkle** (`Sparkle.framework`) — vendored 2.9.1 binary, embedded under `Contents/Frameworks/`.
 

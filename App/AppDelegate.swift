@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "videoScaling":              VideoScaling.fullScreen.rawValue,
         "soundEnabled":              false,
         "differentVideoPerDisplay":  true,
+        "titleMode":                 TitleMode.atStart.rawValue,
+        "titleRepeatMinutes":        5,
     ]
 
     private var idleThresholdSeconds: Double {

@@ -32,6 +32,7 @@ SWIFT_FRAMEWORKS := Cocoa AVFoundation CoreMedia CoreGraphics QuartzCore \
 SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift \
                     App/ScreensaverWindow.swift \
                     App/VideoStage.swift App/VideoLibrary.swift \
+                    App/TitleOverlay.swift \
                     App/StatusItem.swift App/SettingsWindow.swift \
                     App/HotkeyManager.swift \
                     App/LockScreen.swift App/Screenshot.swift \
