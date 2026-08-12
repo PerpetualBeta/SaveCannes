@@ -2,7 +2,7 @@
 
 Plays your own videos as a macOS screensaver. Point it at a film, or at a folder of them, and it takes over every display when your Mac goes quiet.
 
-A tribute to Save Hollywood, the much-loved saver that did exactly this and is no longer maintained. Same idea, rebuilt from scratch on the modern Jorvik screensaver pattern.
+A tribute to [Save Hollywood](http://s.sudre.free.fr/Software/SaveHollywood/about.html) by WhiteBox — the much-loved saver that did exactly this, until macOS broke it. Same idea, rebuilt from scratch on the modern Jorvik screensaver pattern.
 
 ## Requirements
 
@@ -33,6 +33,8 @@ To uninstall: `pkill -f "Save Cannes"` then drag `Save Cannes.app` to the Trash.
 Save Cannes is a screensaver-style product, but it ships as a regular `.app` rather than as a `.saver` bundle.
 
 The deciding reason is file access. A `.saver` runs inside Apple's `legacyScreenSaver` host process, which owns the permission identity — a hosted saver can never hold a file-access grant of its own, so it could never reliably read the video folder you chose. There's a longer list of reasons besides (process suspension, multi-instance preview lifecycle, removed SPIs) that the rest of the Jorvik saver family ran into first.
+
+Save Hollywood hit this wall first, and its author's own account is worth reading, because it's the same wall: *"In macOS Catalina, Apple completely broke the standard open panel APIs when invoked from a screen saver."* Choosing a file **is** the entire interface for a saver like this, and from inside the host process there was no longer a supported way to offer it — the note goes on to say that working around it would need APIs Apple keeps private for its own screensavers. Save Cannes puts the picker, and the file access it grants, in an ordinary app where both still work.
 
 As a regular app it gets out of its own way: it asks for your folder, plays from it, and gives full control over the configurator, hotkeys, and lock-screen integration a saver bundle can't reach.
 
