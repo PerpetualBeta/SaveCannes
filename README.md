@@ -16,6 +16,12 @@ Two formats on every release — both signed and notarised, pick whichever suits
 - **[Installer (`.pkg`)](https://github.com/PerpetualBeta/SaveCannes/releases/latest/download/SaveCannes.pkg)** — recommended for first-time installs. Double-click to run; macOS Installer places `Save Cannes.app` in `/Applications/` without quarantine or App Translocation.
 - **[Download (`.zip`)](https://github.com/PerpetualBeta/SaveCannes/releases/latest)** — unzip and drag `Save Cannes.app` to your `/Applications/` folder.
 
+Or install it with [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask perpetualbeta/jorvik/savecannes
+```
+
 Either way, the first launch happens immediately. Save Cannes registers itself for launch at user login on first run; toggle that off in Settings → General if you'd rather start it manually.
 
 After first launch you'll see a small **film-strip** icon in your menu bar. That's your only touchpoint with the app — everything else lives in its menu and its **Settings…** window. Open Settings and choose a video source before anything will play.
