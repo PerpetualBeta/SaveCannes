@@ -3,8 +3,8 @@
 import AppKit
 import CoreGraphics
 
-// The Jorvik brand blue, carrying a strip of film in Palme d'Or gold, tilted
-// off the horizontal so it reads as film running rather than a gold bar.
+// The Jorvik brand blue, carrying a strip of film in cool silver, tilted
+// off the horizontal so it reads as film running rather than a metal bar.
 //
 // The background is the estate's standard icon plate: the #004080-family
 // gradient, corner radius 0.22, full bleed — the same plate Ballast,
@@ -24,8 +24,11 @@ let brandBottom = NSColor(srgbRed: 0.00, green: 0.20, blue: 0.42, alpha: 1.0)
 /// A cool highlight rather than the warm projector glow of the first version.
 /// Amber over blue turns to mud.
 let sheen       = NSColor(srgbRed: 0.45, green: 0.70, blue: 0.95, alpha: 1.0)
-let gold        = NSColor(srgbRed: 0xD9/255, green: 0xB0/255, blue: 0x4A/255, alpha: 1.0)
-let goldDeep    = NSColor(srgbRed: 0xA8/255, green: 0x7C/255, blue: 0x24/255, alpha: 1.0)
+/// Film stock in silver. Cool and very slightly blue-tinted so it belongs to the
+/// plate it sits on: a neutral grey next to this blue reads as dirty, and a warm
+/// metal fights it.
+let silver      = NSColor(srgbRed: 0xEA/255, green: 0xEF/255, blue: 0xF3/255, alpha: 1.0)
+let silverDeep  = NSColor(srgbRed: 0x94/255, green: 0xA1/255, blue: 0xAD/255, alpha: 1.0)
 
 func drawIcon(size s: CGFloat) -> NSImage {
     let image = NSImage(size: NSSize(width: s, height: s))
@@ -75,14 +78,14 @@ func drawIcon(size s: CGFloat) -> NSImage {
     let stripH = s * 0.40
     let strip = CGRect(x: -stripW / 2, y: -stripH / 2, width: stripW, height: stripH)
 
-    // Strip body, with a slight vertical gradient so the gold has some depth.
+    // Strip body, with a slight vertical gradient so the silver has some depth.
     ctx.saveGState()
     ctx.addPath(CGPath(roundedRect: strip,
                        cornerWidth: s * 0.03, cornerHeight: s * 0.03,
                        transform: nil))
     ctx.clip()
     if let body = CGGradient(colorsSpace: space,
-                             colors: [gold.cgColor, goldDeep.cgColor] as CFArray,
+                             colors: [silver.cgColor, silverDeep.cgColor] as CFArray,
                              locations: [0.0, 1.0]) {
         ctx.drawLinearGradient(body,
                                start: CGPoint(x: 0, y: strip.maxY),
@@ -91,7 +94,7 @@ func drawIcon(size s: CGFloat) -> NSImage {
     }
     ctx.restoreGState()
 
-    // Frames — three windows punched out of the gold, showing the plate
+    // Frames — three windows punched out of the strip, showing the plate
     // through, and the sprocket holes above and below them.
     let frameCount = 3
     let margin = stripH * 0.22          // depth of the sprocket rails
