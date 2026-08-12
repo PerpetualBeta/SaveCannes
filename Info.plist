@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>cc.jorviksoftware.SaveCannes</string>
+    <key>CFBundleName</key>
+    <string>Save Cannes</string>
+    <key>CFBundleDisplayName</key>
+    <string>Save Cannes</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>SaveCannes</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Background utility: no Dock icon, no menu bar, no app-switcher
+         entry. The user experiences this app as a screensaver, not as a
+         foreground application. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <!-- Shown in the macOS file-access prompt when the chosen video folder
+         lives in one of the protected locations. Without these strings the
+         prompt is generic and gives the user nothing to decide on. -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Save Cannes needs access to play videos you have chosen from your Desktop.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Save Cannes needs access to play videos you have chosen from your Documents folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Save Cannes needs access to play videos you have chosen from your Downloads folder.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>Save Cannes needs access to play videos you have chosen from an external drive.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>Save Cannes needs access to play videos you have chosen from a network volume.</string>
+    <!-- Sparkle 2.x configuration. Suite-wide constants per the
+         conventions/sparkle-integration.md doc; only the feed URL
+         is per-app. -->
+    <key>SUFeedURL</key>
+    <string>https://jorviksoftware.cc/appcasts/savecannes.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>zVc7rs8EiLmlDAYpgaIItjnHtsCkvyVVub+I0/sSb3Q=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+</dict>
+</plist>

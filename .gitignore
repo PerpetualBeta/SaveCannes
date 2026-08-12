@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+Save Cannes.app/
+Resources/SaveCannes.iconset/
+*.swiftmodule
+*.swiftdoc
+*.dSYM
+Installer/_pkg_staging/
