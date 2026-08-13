@@ -122,9 +122,9 @@ struct SaveCannesSettingsContent: View {
             }
             .font(.caption)
 
-            HStack {
-                TextField(L10n.string("settings.stream_label", defaultValue: "Stream:"),
-                          text: $newURL,
+            HStack(spacing: 8) {
+                Text(L10n.string("settings.stream_label", defaultValue: "Stream:"))
+                TextField("", text: $newURL,
                           prompt: Text(L10n.string("settings.stream_placeholder",
                                                    defaultValue: "https://… .m3u8 or .mp4")))
                     .textFieldStyle(.roundedBorder)
@@ -132,7 +132,6 @@ struct SaveCannesSettingsContent: View {
                 Button(L10n.string("settings.add_stream", defaultValue: "Add")) { addStream() }
                     .disabled(VideoSource.forTypedURL(newURL) == nil)
             }
-            .font(.caption)
             Text(L10n.string("settings.stream_note",
                              defaultValue: "A stream is handed straight to the player, so it has to be something it can open: an HLS .m3u8 or a direct MP4, not a web page it would have to scrape. A live stream has no end, so it plays until you dismiss the saver, and a frame grab of one isn't possible."))
                 .font(.caption)

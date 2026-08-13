@@ -68,6 +68,7 @@ final class VideoStage: NSView {
 
     private var itemObservers: [NSObjectProtocol] = []
     private var statusObservation: NSKeyValueObservation?
+    private var presentationObservation: NSKeyValueObservation?
     /// Pixel dimensions of the current item, rotation applied. Only
     /// `.originalSize` needs it; nil until an item is loaded.
     private var currentPixelSize: CGSize?
@@ -186,10 +187,12 @@ final class VideoStage: NSView {
         // A whole pass has failed — every file in the source has been tried
         // since the last one that played. Stop rather than loop.
         guard failuresSinceLastSuccess < candidatesInSource else {
-            showNotice(L10n.format(
-                "stage.none_playable",
-                defaultValue: "None of the %d videos from your sources could be played.",
-                candidatesInSource))
+            showNotice(candidatesInSource == 1
+                ? L10n.string("stage.none_playable_one",
+                              defaultValue: "The one video your sources offer could not be played.")
+                : L10n.format("stage.none_playable",
+                              defaultValue: "None of the %d videos from your sources could be played.",
+                              candidatesInSource))
             return
         }
         let url = queue.removeFirst()
@@ -206,12 +209,19 @@ final class VideoStage: NSView {
     @MainActor
     private func present(_ url: URL) async {
         let asset = AVURLAsset(url: url)
-        let size: CGSize
+        let size: CGSize?
         do {
             guard try await asset.load(.isPlayable) else {
                 throw StageError.notPlayable
             }
-            guard let pixels = try await Self.pixelSize(of: asset) else {
+            let pixels = try await Self.pixelSize(of: asset)
+            // **An HLS asset has no tracks to load until it is playing**, so
+            // `loadTracks` legitimately comes back empty for a stream. Treating
+            // that as "no video track" rejected every stream before it played —
+            // the guard was written for an audio-only *file* and is only
+            // meaningful there. For a remote asset the size arrives later, from
+            // the player item's `presentationSize`.
+            if pixels == nil, url.isFileURL {
                 throw StageError.noVideoTrack
             }
             size = pixels
@@ -237,7 +247,8 @@ final class VideoStage: NSView {
         layoutPlayerLayer()
         player.play()
         startWatchdog()
-        scLog("playing \(url.lastPathComponent) (\(Int(size.width))×\(Int(size.height)))")
+        scLog("playing \(url.lastPathComponent)"
+              + (size.map { " (\(Int($0.width))×\(Int($0.height)))" } ?? " (size not yet known — stream)"))
 
         // Metadata is read after playback starts rather than before it: the
         // picture is the point, and a caption arriving a moment into the film
@@ -436,6 +447,25 @@ final class VideoStage: NSView {
     // MARK: - Item observers
 
     private func attach(_ item: AVPlayerItem) {
+        // A stream reports no track dimensions up front. `presentationSize`
+        // becomes non-zero once the first frames are decoded, which is the only
+        // way "original size" can mean anything for a stream.
+        presentationObservation = item.observe(\.presentationSize, options: [.new]) { [weak self] item, _ in
+            let size = item.presentationSize
+            guard size.width > 0, size.height > 0 else { return }
+            DispatchQueue.main.async {
+                guard let self = self, self.currentPixelSize != size else { return }
+                let first = self.currentPixelSize == nil
+                self.currentPixelSize = size
+                self.layoutPlayerLayer()
+                // Logged on the first report and on any change: an adaptive
+                // stream opens on a low variant and steps up, and "original
+                // size" has to follow it rather than pin the opening frame.
+                scLog(first ? "stream reported its size: \(Int(size.width))×\(Int(size.height))"
+                            : "stream changed variant: \(Int(size.width))×\(Int(size.height))")
+            }
+        }
+
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
             // KVO can arrive off the main thread; everything here touches
             // AppKit and the playlist.
@@ -479,6 +509,8 @@ final class VideoStage: NSView {
         stopWatchdog()
         statusObservation?.invalidate()
         statusObservation = nil
+        presentationObservation?.invalidate()
+        presentationObservation = nil
         for obs in itemObservers { NotificationCenter.default.removeObserver(obs) }
         itemObservers.removeAll()
     }
