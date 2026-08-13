@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // background and moving the two apart is still being judged by eye.
         "parallaxEnabled":           false,
         "parallaxStrength":          VideoStage.defaultParallaxStrength,
+        "parallaxDepthSpread":       PhotoParallax.defaultDepthSpread,
     ]
 
     private var idleThresholdSeconds: Double {

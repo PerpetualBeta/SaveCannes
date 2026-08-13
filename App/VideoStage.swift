@@ -52,8 +52,11 @@ final class VideoStage: NSView {
     /// Whether the subject of a photo is lifted off its background and moved
     /// separately — see `PhotoParallax`. Off while it is being judged.
     var parallaxEnabled = false
-    /// How much further the subject travels than the scene behind it.
+    /// How much further the nearest slab travels than the scene behind it.
     var parallaxStrength = VideoStage.defaultParallaxStrength
+    /// How wide the transition from subject depth to background depth is — how
+    /// much of the subject's surroundings comes forward with it.
+    var parallaxDepthSpread = PhotoParallax.defaultDepthSpread
 
     private let player = AVPlayer()
     private let playerLayer = AVPlayerLayer()
@@ -62,10 +65,17 @@ final class VideoStage: NSView {
     /// completely different ways and swapping between them is then just a
     /// matter of which one is hidden.
     private let stillLayer = CALayer()
-    /// The subject of the photo, cut out and drawn over `stillLayer`, when the
-    /// photo has one and the effect is on. Hidden otherwise, which is what
-    /// `startKenBurns` reads to decide whether there is a near plane to move.
-    private let subjectLayer = CALayer()
+    /// The photo cut into slabs of depth, drawn over `stillLayer`, nearest last.
+    /// Empty when the photo has no subject to build a depth field around, or the
+    /// effect is off — which is what `startKenBurns` reads to decide whether there
+    /// is anything to move differently.
+    private var bandLayers: [CALayer] = []
+    /// Each slab's depth, 0 far … 1 near, in step with `bandLayers`. Kept apart
+    /// from the layers because `CALayer` has nowhere honest to put it.
+    private var bandDepths: [CGFloat] = []
+    /// Where each slab sits in the photo, in unit coordinates of the photo, so
+    /// `layoutBandLayers` can place them without re-reading the images.
+    private var bandRects: [CGRect] = []
     /// Advances off a photo. The video path is driven by the player reaching the
     /// end of its item; a still would sit there forever, so it gets a clock.
     private var stillTimer: Timer?
@@ -79,6 +89,8 @@ final class VideoStage: NSView {
     /// Where the photo's subject meets the world, when one was lifted — the point
     /// the subject grows about. See `PhotoLayers.anchor`.
     private var currentAnchor: CGPoint?
+    /// How much of the frame the lifted subject covered, for the log line.
+    private var currentSubjectShare: CGFloat?
     private var notice: NSTextField?
     private let overlay = TitleOverlay(frame: .zero)
     /// What the caption should say for the item playing now, kept so the
@@ -131,10 +143,6 @@ final class VideoStage: NSView {
         stillLayer.magnificationFilter = .trilinear
         stillLayer.isHidden = true
         layer?.addSublayer(stillLayer)
-        subjectLayer.minificationFilter = .trilinear
-        subjectLayer.magnificationFilter = .trilinear
-        subjectLayer.isHidden = true
-        layer?.addSublayer(subjectLayer)
         // Sized here, and again in `layout()`. An autoresizing mask alone
         // isn't enough: it only fires when the superview *changes* size, and
         // this view is created at its final size, so a subview added at
@@ -162,7 +170,9 @@ final class VideoStage: NSView {
         // about keeping both of them under the text.
         if stillLayer.superlayer === layer { layer.insertSublayer(stillLayer, at: 1) }
         // Directly over the photo it was cut out of, and still under the caption.
-        if subjectLayer.superlayer === layer { layer.insertSublayer(subjectLayer, at: 2) }
+        for (index, band) in bandLayers.enumerated() where band.superlayer === layer {
+            layer.insertSublayer(band, at: UInt32(2 + index))
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -411,6 +421,13 @@ final class VideoStage: NSView {
             Self.parallaxStrengthRange.upperBound)
     }
 
+    /// Clamped for the same reason as the others: a value from disk shouldn't be
+    /// able to make the depth field meaningless in either direction.
+    private var photoDepthSpread: CGFloat {
+        min(max(parallaxDepthSpread, PhotoParallax.depthSpreadRange.lowerBound),
+            PhotoParallax.depthSpreadRange.upperBound)
+    }
+
     /// Whether a photo's subject is being lifted right now. Tied to the pan: with
     /// no movement there is no difference in movement to see, and the split would
     /// cost a Vision request for nothing.
@@ -428,8 +445,16 @@ final class VideoStage: NSView {
         let target = CGSize(width: bounds.width * scale * photoZoom,
                             height: bounds.height * scale * photoZoom)
         let splitting = liftingSubjects
+        let zoom = photoZoom
+        let strength = photoParallaxStrength
+        let spread = photoDepthSpread
+        // The largest content step allowed at a slab boundary, in photo pixels:
+        // one point on this display. The photo was decoded to cover the display,
+        // so this is the conversion between the two.
+        let step = bounds.width > 0 ? CGFloat(target.width) / bounds.width : 1
         let decoded = await Task.detached(priority: .userInitiated) {
-            Self.decode(url, covering: target, splittingSubject: splitting)
+            Self.decode(url, covering: target, splittingSubject: splitting,
+                        zoom: zoom, strength: strength, step: step, spread: spread)
         }.value
         // The saver may have been dismissed while the photo was being read.
         guard running else { return }
@@ -447,6 +472,8 @@ final class VideoStage: NSView {
         currentStill = (url, decoded.image)
         currentFocus = decoded.focus
         currentAnchor = decoded.layers?.anchor
+        currentSubjectShare = decoded.layers?.subjectShare
+        rebuildBandLayers(decoded.layers)
         currentPixelSize = CGSize(width: decoded.image.width, height: decoded.image.height)
         stillLayer.isHidden = false
         // No implicit animation on the swap. CALayer cross-fades a `contents`
@@ -457,9 +484,9 @@ final class VideoStage: NSView {
         // With a subject lifted, the layer underneath is the photo with that
         // subject taken out of it as far as its own edge — see `PhotoLayers` for
         // why it stops there and not at the edge itself.
-        stillLayer.contents = decoded.layers?.scene ?? decoded.image
-        subjectLayer.contents = decoded.layers?.subject
-        subjectLayer.isHidden = decoded.layers == nil
+        // The photo underneath is always the whole photo: the slabs over it are
+        // pieces of the same picture, and this is what shows if one is missing.
+        stillLayer.contents = decoded.image
         layoutStillLayer()
         CATransaction.commit()
         startKenBurns()
@@ -472,8 +499,9 @@ final class VideoStage: NSView {
                   String(format: ", focus %.2f,%.2f", $0.point.x, $0.point.y)
               } ?? ", no focus found")
               + (decoded.layers.map {
-                  String(format: ", subject lifted (%.0f%% of frame)", $0.subjectShare * 100)
-              } ?? (liftingSubjects ? ", no subject to lift" : "")))
+                  String(format: ", %d depth slabs (subject %.0f%% of frame)",
+                         $0.bands.count, $0.subjectShare * 100)
+              } ?? (liftingSubjects ? ", no subject to build depth from" : "")))
         currentCaption = (decoded.title, decoded.copyright)
         showCaption()
         startTitleTimer()
@@ -502,13 +530,12 @@ final class VideoStage: NSView {
         stillLayer.transform = CATransform3DIdentity
         stillLayer.contents = nil
         stillLayer.isHidden = true
-        subjectLayer.removeAnimation(forKey: Self.kenBurnsKey)
-        subjectLayer.transform = CATransform3DIdentity
-        subjectLayer.contents = nil
-        subjectLayer.isHidden = true
+        for band in bandLayers { band.removeFromSuperlayer() }
+        bandLayers.removeAll()
         currentStill = nil
         currentFocus = nil
         currentAnchor = nil
+        currentSubjectShare = nil
         playerLayer.isHidden = false
     }
 
@@ -520,7 +547,7 @@ final class VideoStage: NSView {
     /// snapping back: the photo is still on screen when the animation ends if
     /// the duration and the timer ever disagree by a frame.
     private func startKenBurns() {
-        for layer in [stillLayer, subjectLayer] {
+        for layer in [stillLayer] + bandLayers {
             layer.removeAnimation(forKey: Self.kenBurnsKey)
             layer.transform = CATransform3DIdentity
         }
@@ -539,25 +566,30 @@ final class VideoStage: NSView {
         let inward = Bool.random()
         animate(stillLayer, to: zoom, offset: offset, inward: inward)
 
-        // The subject, when there is one, grows faster than the scene — nearer
-        // things do, in a real camera move, and that difference is the whole of
-        // the effect. It grows about the point where it meets the world, and the
-        // translation below is the one that keeps that point exactly where the
-        // scene puts it: not only at the two ends of the move but at every frame
-        // between them, since Core Animation interpolates both transforms
-        // element by element and the two expressions stay equal under that.
+        // The slabs, nearest moving furthest — which is what things nearer the
+        // camera do, and the whole of the effect.
         //
-        // So the feet stay planted, and the subject always covers the hole it
-        // came out of. Both of those are why this can be worth seeing where the
-        // sliding version wasn't.
-        guard !subjectLayer.isHidden, let anchor = currentAnchor else { return }
+        // Every slab gets the same translation and differs only in its scale.
+        // That isn't a simplification: with this translation, a slab at the
+        // scene's own zoom is algebraically identical to the scene's transform
+        // about the layer's centre, so the far slab and the photo underneath it
+        // move as one, and the near slab reaches exactly the zoom the subject
+        // would have had if it had been cut out and lifted. The slabs interpolate
+        // between the two, and the point they all expand about stays exactly where
+        // the scene puts it at every frame of the move — Core Animation
+        // interpolates both transforms element by element, and the two
+        // expressions for where that point lands stay equal under that.
+        guard !bandLayers.isEmpty, let anchor = currentAnchor else { return }
         let frame = stillLayer.frame
         let middle = CGPoint(x: frame.width / 2, y: frame.height / 2)
-        let contact = CGPoint(x: anchor.x * frame.width, y: anchor.y * frame.height)
-        animate(subjectLayer, to: zoom + (zoom - 1) * photoParallaxStrength,
-                offset: CGPoint(x: (middle.x - contact.x) * (1 - zoom) + offset.x,
-                                y: (middle.y - contact.y) * (1 - zoom) + offset.y),
-                inward: inward)
+        let centre = CGPoint(x: anchor.x * frame.width, y: anchor.y * frame.height)
+        let shift = CGPoint(x: (middle.x - centre.x) * (1 - zoom) + offset.x,
+                            y: (middle.y - centre.y) * (1 - zoom) + offset.y)
+        let nearest = zoom + (zoom - 1) * photoParallaxStrength
+        for (index, band) in bandLayers.enumerated() {
+            let depth = bandDepths.indices.contains(index) ? bandDepths[index] : 0
+            animate(band, to: zoom + (nearest - zoom) * depth, offset: shift, inward: inward)
+        }
     }
 
     /// The move itself, applied to one layer.
@@ -608,7 +640,9 @@ final class VideoStage: NSView {
     /// that transform is displayed on its side — the still-image version of the
     /// `preferredTransform` problem `pixelSize(of:)` solves for video.
     nonisolated private static func decode(_ url: URL, covering target: CGSize,
-                                           splittingSubject: Bool) -> DecodedStill? {
+                                           splittingSubject: Bool, zoom: CGFloat,
+                                           strength: CGFloat, step: CGFloat,
+                                           spread: CGFloat) -> DecodedStill? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let options: [CFString: Any] = [
@@ -630,7 +664,11 @@ final class VideoStage: NSView {
                             title: embeddedTitle(properties) ?? filename,
                             copyright: embeddedCopyright(properties),
                             focus: PhotoFocus.detect(in: image),
-                            layers: splittingSubject ? PhotoParallax.layers(for: image) : nil)
+                            layers: splittingSubject
+                                ? PhotoParallax.layers(for: image, zoom: zoom,
+                                                       strength: strength, step: step,
+                                                       spread: spread)
+                                : nil)
     }
 
     /// The largest edge worth decoding.
@@ -954,11 +992,11 @@ final class VideoStage: NSView {
         case .fitToScreen:
             stillLayer.contentsGravity = .resizeAspect
             stillLayer.frame = bounds
-            matchSubjectToPhoto()
+            layoutBandLayers()
         case .originalSize:
             stillLayer.contentsGravity = .resizeAspect
             stillLayer.frame = originalSizeFrame()
-            matchSubjectToPhoto()
+            layoutBandLayers()
         }
     }
 
@@ -980,7 +1018,7 @@ final class VideoStage: NSView {
         stillLayer.frame = PhotoFraming.fillFrame(
             imageSize: CGSize(width: image.width, height: image.height),
             in: bounds, focus: currentFocus)
-        matchSubjectToPhoto()
+        layoutBandLayers()
     }
 
     /// The subject sits in exactly the frame the photo does — it was cut out of
@@ -991,10 +1029,59 @@ final class VideoStage: NSView {
     /// world so that its transform grows it about that point. Set before the
     /// frame: changing an anchor point on its own moves the layer, and setting the
     /// frame afterwards is what puts it back.
-    private func matchSubjectToPhoto() {
-        subjectLayer.contentsGravity = stillLayer.contentsGravity
-        subjectLayer.anchorPoint = currentAnchor ?? CGPoint(x: 0.5, y: 0.5)
-        subjectLayer.frame = stillLayer.frame
+    /// Build one layer per slab, far to near.
+    ///
+    /// The slabs are pieces of the photo, so each one's frame is the piece of the
+    /// photo's frame it came from, and its anchor point is put on the shared
+    /// expansion centre — which is generally outside the slab's own rectangle, and
+    /// is allowed to be. Setting the anchor moves the layer, so the frame is set
+    /// after it, which is what puts it back.
+    private func rebuildBandLayers(_ layers: PhotoLayers?) {
+        for band in bandLayers { band.removeFromSuperlayer() }
+        bandLayers.removeAll()
+        bandDepths.removeAll()
+        bandRects.removeAll()
+        guard let layers = layers, let host = layer else { return }
+        let image = currentStill?.image
+        let width = CGFloat(image?.width ?? 1), height = CGFloat(image?.height ?? 1)
+        for band in layers.bands {
+            let slab = CALayer()
+            slab.contents = band.image
+            slab.contentsGravity = .resize
+            slab.minificationFilter = .trilinear
+            slab.magnificationFilter = .trilinear
+            // The piece's place in the photo, in unit coordinates with the origin
+            // at the bottom left — `PhotoBand.origin` counts rows from the top.
+            bandRects.append(CGRect(
+                x: band.origin.x / width,
+                y: (height - band.origin.y - CGFloat(band.image.height)) / height,
+                width: CGFloat(band.image.width) / width,
+                height: CGFloat(band.image.height) / height))
+            bandDepths.append(band.depth)
+            bandLayers.append(slab)
+            host.addSublayer(slab)
+        }
+        keepVideoBehind()
+        layoutBandLayers()
+    }
+
+    private func layoutBandLayers() {
+        guard !bandLayers.isEmpty else { return }
+        let frame = stillLayer.frame
+        let centre = CGPoint(x: (currentAnchor?.x ?? 0.5) * frame.width,
+                             y: (currentAnchor?.y ?? 0.5) * frame.height)
+        for (index, band) in bandLayers.enumerated() {
+            guard bandRects.indices.contains(index) else { continue }
+            let unit = bandRects[index]
+            let rect = CGRect(x: frame.minX + unit.minX * frame.width,
+                              y: frame.minY + unit.minY * frame.height,
+                              width: unit.width * frame.width,
+                              height: unit.height * frame.height)
+            guard rect.width > 0, rect.height > 0 else { continue }
+            band.anchorPoint = CGPoint(x: (centre.x - unit.minX * frame.width) / rect.width,
+                                       y: (centre.y - unit.minY * frame.height) / rect.height)
+            band.frame = rect
+        }
     }
 
     /// One video pixel per screen pixel, centred on black.

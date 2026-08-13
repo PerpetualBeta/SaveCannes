@@ -3,72 +3,156 @@ import CoreImage
 import CoreVideo
 import Vision
 
-/// A photo's subject, lifted off it so the two can be moved at different rates.
+/// A photograph cut into slabs of depth, so the near ones can be moved further
+/// than the far ones and the picture reads as having depth in it.
 ///
-/// It is worth being plain about what this is and isn't. A true 2.5D move needs a
+/// It is worth being plain about what this is and isn't. A true depth move needs a
 /// depth value per pixel. macOS hands one over only for photos that were taken
 /// with one — an iPhone portrait carries a disparity map in its file — and Vision
 /// has no request that estimates depth from an ordinary photograph. What it does
 /// have is subject lifting: the same machinery as dragging a cut-out out of a
-/// photo in Preview. That gives two planes rather than a continuum, which is
-/// enough for the thing that reads as depth — the subject coming towards you
-/// faster than the scene it stands in.
+/// photo in Preview. That gives a subject and a background, and smoothing the
+/// boundary between them into a gradient gives a usable stand-in for depth.
 ///
-/// Growing the subject about its contact point covers most of the shape it was
-/// cut from, but not all of it, and the exception is worth stating because it
-/// decides the design. Growing moves a point away from the anchor, so a hand at
-/// the end of an outstretched arm ends up further out — and the place it came
-/// from is only covered if the point a sixth of the way back towards the feet is
-/// also part of the subject. For a hand held away from the body it isn't; it is
-/// beside the waist, in the background. So the original arm stays visible next to
-/// the grown one, and a woman crossing a road has four of them.
+/// ## Why slabs, and not a cut-out
 ///
-/// The scene therefore does need the subject taken out of it. What it must not do
-/// is take it out all the way to the edge: the mask has a soft edge, and a
-/// half-transparent pixel of subject sitting over invented scenery is a blurred
-/// halo all the way round. So the patch stops short of the edge by the width of
-/// that soft edge, and the last couple of pixels of the scene are the photo's own.
-/// The subject's soft edge lands on the pixels it was made of, and what is left
-/// exposed beside a grown arm is a hairline of the original rather than the arm.
+/// Cutting the subject out and moving it is the obvious implementation, and it is
+/// the one that cannot be made to work. Moving a cut-out uncovers the ground it
+/// was standing on, and no photograph of that ground exists — so something has to
+/// be invented, and on a real photograph the eye finds it. Worse, the geometry
+/// guarantees the original stays visible beside the moved copy wherever the
+/// subject is not star-shaped about the point it grows from: a hand held away from
+/// the body ends up further out, and the place it came from is only covered if the
+/// point a sixth of the way back towards the feet is also subject. Beside a waist
+/// it is background. That is a photograph of a woman with four arms, and no
+/// quality of inpainting fixes it — measured, on a photo with no invented fill
+/// anywhere in it, the second arm is still there.
+///
+/// So nothing is cut and nothing is invented. The photograph is divided into many
+/// slabs by depth, each slab is a piece of the original, and each is drawn with
+/// its own scale. Neighbouring slabs overlap by one step of movement, so no gap
+/// can open between them. What is left is a step in the content across each
+/// boundary, and that step is the total differential movement divided by the
+/// number of slabs — which is why the number of slabs is derived from the step we
+/// are willing to see rather than picked.
+struct PhotoBand: @unchecked Sendable {
+    /// This slab's pixels. Cropped to what it covers, so a slab near the subject
+    /// costs a small image rather than a full-frame one.
+    let image: CGImage
+    /// Where it sits in the photo, in photo pixels, y measured down from the top
+    /// as `CGImage` does.
+    let origin: CGPoint
+    /// Depth at the middle of the slab: 0 is the far distance, 1 the subject.
+    let depth: CGFloat
+}
+
 struct PhotoLayers: @unchecked Sendable {
-    /// The photo with the subject taken out of it, stopping short of the subject's
-    /// own edge. What is behind the subject when it grows past where it was.
-    let scene: CGImage
-    /// The subject alone, everything else transparent. Same size as the photo, so
-    /// it lines up with it without any arithmetic.
-    let subject: CGImage
-    /// How much of the frame the subject covers, 0–1. Kept because it decides
-    /// whether the effect is worth applying at all.
-    let subjectShare: CGFloat
-    /// Where the subject meets the world, normalised to the photo with the origin
-    /// at the bottom left: across, the middle of it; up, the foot of it.
-    ///
-    /// The point the subject grows about, and the reason the effect can be strong
-    /// at all. Growing a subject about its middle slides its feet down through
-    /// whatever it is standing on. Growing it about its foot keeps the feet where
-    /// they are and moves the head, which is what somebody walking towards you
-    /// does. It also means the subject contains the shape it was cut from at every
-    /// point in the move, which is what makes the patch unnecessary.
+    /// Far to near. Drawn in this order.
+    let bands: [PhotoBand]
+    /// The point everything expands about, normalised to the photo with the origin
+    /// at the bottom left. The subject's own centre of area: expansion about
+    /// anything else drags the subject sideways as well as forward.
     let anchor: CGPoint
+    /// How much of the frame the subject covers, 0–1. Kept for the log line, and
+    /// because it decides whether the effect is worth applying at all.
+    let subjectShare: CGFloat
 }
 
 enum PhotoParallax {
 
-    /// When lifting a subject is worth doing.
+    /// When the effect is worth applying.
     ///
     /// Under the bottom of this the subject is a speck and moving it differently
-    /// achieves nothing anyone would see. Over the top there is hardly any scene
-    /// left for it to move against, so the effect stops reading as depth and
-    /// starts reading as the whole picture wobbling.
+    /// achieves nothing anyone would see. Over the top there is hardly any
+    /// background left for it to move against, so it stops reading as depth and
+    /// starts reading as the whole picture being zoomed.
     static let workableSubjectShare: ClosedRange<CGFloat> = 0.02...0.80
 
-    /// One context for the process. Creating one per photo is the expensive way to
-    /// do this, and `CIContext` is documented as safe to share.
+    /// How wide the transition from subject depth to background depth is, as a
+    /// multiple of the subject's own radius.
+    ///
+    /// This is the one genuinely aesthetic number here — it decides how much of
+    /// the subject's surroundings comes forward with it. Small, and the subject
+    /// moves alone, like a cut-out that happens not to have a seam; large, and the
+    /// ground it stands on comes part of the way with it, which is what depth
+    /// actually looks like. Checked by eye at 0.35 and 1.0, both clean.
+    static let defaultDepthSpread: CGFloat = 1.0
+    static let depthSpreadRange: ClosedRange<CGFloat> = 0.1...3
+
+    /// A ceiling on the number of slabs, so a very large display cannot ask for a
+    /// number of layers that costs more to build than the effect is worth. Reached
+    /// only on displays where the step it implies is still under half a point.
+    static let maximumBands = 256
+
+    /// One context for the process. `CIContext` is documented as safe to share,
+    /// and creating one per photo is the expensive way to do this.
     private static let context = CIContext(options: [.useSoftwareRenderer: false])
 
-    /// Lift a photo's subject, or nil if it hasn't got one — which is most
-    /// landscapes, and is not a failure.
-    static func layers(for image: CGImage) -> PhotoLayers? {
+    /// Cut a photo into slabs, or nil if it has no subject to build a depth field
+    /// around — which is most landscapes, and is not a failure.
+    ///
+    /// - Parameters:
+    ///   - zoom: the scene's own zoom over the move.
+    ///   - strength: how much further the nearest slab travels than the scene.
+    ///   - step: the largest content step, in photo pixels, that may show at a
+    ///     slab boundary. The caller knows how many photo pixels a screen pixel
+    ///     is worth, so it owns this number.
+    ///   - spread: `defaultDepthSpread`, or whatever the user has dialled.
+    static func layers(for image: CGImage, zoom: CGFloat, strength: CGFloat,
+                       step: CGFloat, spread: CGFloat) -> PhotoLayers? {
+        guard let depth = depthField(of: image, spread: spread),
+              workableSubjectShare.contains(depth.share),
+              step > 0, zoom > 1, strength > 0
+        else { return nil }
+
+        // How many slabs, from the step we are willing to see.
+        //
+        // A step in the content can only happen at a boundary between slabs, and
+        // boundaries only exist where the depth actually changes: out in the flat
+        // distance every pixel is in the same slab and there is nothing to step
+        // across. So the distance that matters is not the corner of the photo but
+        // the furthest point where depth is still in transition — for a subject in
+        // the middle of a wide landscape that is a small fraction of the frame,
+        // and sizing from the corner would ask for several times more slabs than
+        // the picture has any use for.
+        //
+        // At that distance the nearest slab outruns the scene by (Z − z) of it,
+        // and the slabs share that movement out between them.
+        let far = depth.transitionRadius
+        let differential = (zoom - 1) * strength * far
+        let count = min(maximumBands, max(2, Int((differential / step).rounded(.up))))
+
+        let bands = cut(image, by: depth, into: count, step: step)
+        guard bands.count >= 2 else { return nil }
+        return PhotoLayers(
+            bands: bands,
+            // Back to the bottom-left origin every other part of the photo path
+            // uses, from the top-left origin the field is measured in.
+            anchor: CGPoint(x: depth.anchor.x / CGFloat(image.width),
+                            y: 1 - depth.anchor.y / CGFloat(image.height)),
+            subjectShare: depth.share)
+    }
+
+    // MARK: - The depth field
+
+    private struct DepthField {
+        /// Depth per pixel, photo resolution, row 0 at the top.
+        let values: [Float]
+        /// How fast depth changes per pixel, same layout. Used to work out how far
+        /// a slab has to be grown to keep touching its neighbour.
+        let gradient: [Float]
+        let width: Int
+        let height: Int
+        let share: CGFloat
+        /// The subject's centre of area, in photo pixels, y down from the top.
+        let anchor: CGPoint
+        /// How far from the anchor the depth is still in transition. Past this
+        /// every pixel belongs to the same slab, so no boundary — and no step in
+        /// the content — can occur out there.
+        let transitionRadius: CGFloat
+    }
+
+    private static func depthField(of image: CGImage, spread: CGFloat) -> DepthField? {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         let request = VNGenerateForegroundInstanceMaskRequest()
         do {
@@ -78,167 +162,178 @@ enum PhotoParallax {
         }
         guard let observation = request.results?.first,
               !observation.allInstances.isEmpty,
-              let maskBuffer = try? observation.generateScaledMaskForImage(
+              let buffer = try? observation.generateScaledMaskForImage(
                   forInstances: observation.allInstances, from: handler)
         else { return nil }
 
-        let photo = CIImage(cgImage: image)
-        var mask = CIImage(cvPixelBuffer: maskBuffer)
-        // Documented as scaled to the image, but the arithmetic here is only right
-        // if that holds, so it is made to hold rather than assumed.
-        if mask.extent.width != photo.extent.width || mask.extent.height != photo.extent.height {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0 else { return nil }
+        var mask = CIImage(cvPixelBuffer: buffer)
+        // Documented as scaled to the image, but everything below is only right if
+        // that holds, so it is made to hold rather than assumed.
+        if Int(mask.extent.width) != width || Int(mask.extent.height) != height {
             guard mask.extent.width > 0, mask.extent.height > 0 else { return nil }
             mask = mask.transformed(by: CGAffineTransform(
-                scaleX: photo.extent.width / mask.extent.width,
-                y: photo.extent.height / mask.extent.height))
+                scaleX: CGFloat(width) / mask.extent.width,
+                y: CGFloat(height) / mask.extent.height))
         }
 
-        guard let share = averageBrightness(of: mask), workableSubjectShare.contains(share),
-              let anchor = contactPoint(of: mask)
-        else { return nil }
+        let raw = read(mask, width: width, height: height)
+        var area = 0.0, sumX = 0.0, sumY = 0.0
+        for index in 0..<(width * height) {
+            let value = Double(raw[index])
+            guard value.isFinite, value > 0 else { continue }
+            area += value
+            sumX += value * Double(index % width)
+            sumY += value * Double(index / width)
+        }
+        guard area > 0 else { return nil }
 
-        // Three masks, because the three jobs want different edges, and using one
-        // for all of them is what produced first a halo and then four arms.
-        //
-        // How far apart they are is not a matter of taste: the mask is only as
-        // precise as the resolution it was computed at, which the unscaled
-        // `instanceMask` states, and its soft edge is about two of those pixels
-        // wide once scaled up to the photo. That is the distance.
-        let maskWidth = CGFloat(CVPixelBufferGetWidth(observation.instanceMask))
-        let ramp = maskWidth > 0 ? 2 * photo.extent.width / maskWidth : 2
-        // Grown, to work out what the scenery behind the subject looks like: the
-        // bleed should pull in scenery, not the subject's own edge colours.
-        let outside = mask.applyingFilter("CIMorphologyMaximum",
-                                         parameters: [kCIInputRadiusKey: ramp])
-        // Shrunk, to decide where that goes: stopping short of the edge is what
-        // keeps the subject's soft pixels off it.
-        let inside = mask.applyingFilter("CIMorphologyMinimum",
-                                        parameters: [kCIInputRadiusKey: ramp])
+        // The subject's own size, as the radius of a disc of the same area. Every
+        // length here is a multiple of it, so none of them is a chosen distance.
+        let radius = (area / .pi).squareRoot()
+        let sigma = max(1, spread * CGFloat(radius))
+        let blurred = mask.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: sigma])
+            .cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
+        var values = read(blurred, width: width, height: height)
 
-        guard let fill = sceneBehindSubject(photo: photo, hole: outside, share: share)
-        else { return nil }
-        let scene = fill.applyingFilter("CIBlendWithMask", parameters: [
-            kCIInputBackgroundImageKey: photo,
-            kCIInputMaskImageKey: inside,
-        ])
-        // And the mask exactly as Vision drew it for the subject itself.
-        let clear = CIImage(color: .clear).cropped(to: photo.extent)
-        let subject = photo.applyingFilter("CIBlendWithMask", parameters: [
-            kCIInputBackgroundImageKey: clear,
-            kCIInputMaskImageKey: mask,
-        ])
+        // Normalised so the deepest point of the subject is 1. Without this a thin
+        // subject would only ever get a fraction of the movement, because blurring
+        // a sliver never reaches full value anywhere in it.
+        let peak = values.max() ?? 0
+        guard peak > 0 else { return nil }
+        for index in values.indices { values[index] = min(1, values[index] / peak) }
 
-        guard let sceneImage = context.createCGImage(scene, from: photo.extent),
-              let subjectImage = context.createCGImage(subject, from: photo.extent)
-        else { return nil }
-        return PhotoLayers(scene: sceneImage, subject: subjectImage,
-                           subjectShare: share, anchor: anchor)
-    }
-
-    /// What to put where the subject was.
-    ///
-    /// The subject is cut out, leaving a transparent hole, and the result is
-    /// blurred: a blur works on premultiplied colour, so the scenery around the
-    /// hole bleeds into it, and undoing the premultiplication turns that back into
-    /// colour. Far enough into a large hole the bleed runs out of alpha to divide
-    /// by, so the whole thing sits on top of a heavily smeared copy of the photo,
-    /// which has no holes in it and so always has something to say.
-    ///
-    /// Computed at a fraction of the photo's size. A fill defined as "no detail"
-    /// does not need the photo's resolution, and the blur that produces it is the
-    /// one expensive step here.
-    private static func sceneBehindSubject(photo: CIImage, hole: CIImage,
-                                          share: CGFloat) -> CIImage? {
-        let extent = photo.extent
-        // Enough reach to get from the edge of the subject to the middle of it,
-        // taken as the radius of a disc of the same area — no bounding box needed,
-        // and it scales with the subject rather than being picked.
-        let reach = (share * extent.width * extent.height / .pi).squareRoot()
-        let working = min(1, fillWorkingEdge / max(extent.width, extent.height))
-        let shrink = CGAffineTransform(scaleX: working, y: working)
-
-        let smallPhoto = photo.transformed(by: shrink)
-        let smallHole = hole.transformed(by: shrink)
-        let clear = CIImage(color: .clear).cropped(to: smallPhoto.extent)
-        let holed = clear.applyingFilter("CIBlendWithMask", parameters: [
-            kCIInputBackgroundImageKey: smallPhoto,
-            kCIInputMaskImageKey: smallHole,
-        ])
-        let bled = holed.clampedToExtent()
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: reach * working])
-            .cropped(to: smallPhoto.extent)
-            .unpremultiplyingAlpha()
-        // The floor under the bleed: the photo reduced until nothing of the subject
-        // survives as shape, only as colour.
-        let floor = smallPhoto
-            .clampedToExtent()
-            .applyingFilter("CIGaussianBlur",
-                            parameters: [kCIInputRadiusKey: smallPhoto.extent.width / 8])
-            .cropped(to: smallPhoto.extent)
-        return bled.composited(over: floor)
-            .transformed(by: CGAffineTransform(scaleX: 1 / working, y: 1 / working))
-    }
-
-    /// The long edge, in pixels, the fill is computed at. See `sceneBehindSubject`
-    /// for why this is small.
-    private static let fillWorkingEdge: CGFloat = 320
-
-    /// The middle of the subject across, and the foot of it up.
-    ///
-    /// Measured on a small raster of the mask. Where a subject's foot is, is a
-    /// property of its shape rather than of the photo's resolution, and reducing
-    /// the mask first averages away the stray pixel that would otherwise decide
-    /// the answer on its own.
-    private static func contactPoint(of mask: CIImage) -> CGPoint? {
-        let extent = mask.extent
-        guard extent.width > 0, extent.height > 0 else { return nil }
-        let scale = min(1, contactRasterEdge / max(extent.width, extent.height))
-        let small = mask.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let width = max(1, Int(small.extent.width))
-        let height = max(1, Int(small.extent.height))
-        var pixels = [Float](repeating: 0, count: width * height * 4)
-        context.render(small, toBitmap: &pixels, rowBytes: width * 16,
-                       bounds: CGRect(x: 0, y: 0, width: width, height: height),
-                       format: .RGBAf, colorSpace: nil)
-
-        var mass = 0.0
-        var weightedX = 0.0
-        var lowest: Int?
-        for row in 0..<height {
-            for column in 0..<width {
-                let value = Double(pixels[(row * width + column) * 4])
-                guard value.isFinite, value > 0 else { continue }
-                mass += value
-                weightedX += value * (Double(column) + 0.5) / Double(width)
-                // Half way up the mask's own ramp is the edge of the subject; it is
-                // an alpha, so that is where inside stops being inside.
-                if value >= 0.5 { lowest = max(lowest ?? row, row) }
+        // How fast depth changes, by central difference. A slab has to be grown by
+        // one step of movement to keep touching its neighbour, and a step of
+        // movement is worth `gradient * step` of depth — which is nearly nothing
+        // out in the flat distance, and is what stops the far slabs being grown
+        // into each other across half the picture.
+        var gradient = [Float](repeating: 0, count: width * height)
+        for y in 0..<height {
+            let row = y * width
+            let above = max(0, y - 1) * width, below = min(height - 1, y + 1) * width
+            for x in 0..<width {
+                let left = max(0, x - 1), right = min(width - 1, x + 1)
+                let dx = (values[row + right] - values[row + left]) / Float(right - left == 0 ? 1 : right - left)
+                let dy = (values[below + x] - values[above + x]) / Float(2)
+                gradient[row + x] = (dx * dx + dy * dy).squareRoot()
             }
         }
-        guard mass > 0, let bottomRow = lowest else { return nil }
-        // Row 0 is the top of the photo — measured, in the same way and for the
-        // same reason as in `PhotoFocus.centreOfAttention`.
-        return CGPoint(x: weightedX / mass,
-                       y: 1 - (Double(bottomRow) + 0.5) / Double(height))
+
+        // The furthest point that is neither wholly subject nor wholly background:
+        // one 8-bit level in from each end, which is the smallest difference that
+        // can change a pixel.
+        let level = Float(1.0 / 255.0)
+        let anchor = CGPoint(x: sumX / area, y: sumY / area)
+        var transition: CGFloat = 0
+        for index in values.indices {
+            let value = values[index]
+            guard value > level, value < 1 - level else { continue }
+            let distance = hypot(CGFloat(index % width) - anchor.x,
+                                 CGFloat(index / width) - anchor.y)
+            if distance > transition { transition = distance }
+        }
+        return DepthField(values: values, gradient: gradient, width: width, height: height,
+                          share: CGFloat(area) / CGFloat(width * height),
+                          anchor: anchor,
+                          transitionRadius: max(1, transition))
     }
 
-    /// The long edge, in pixels, the contact point is measured at.
-    private static let contactRasterEdge: CGFloat = 192
+    private static func read(_ image: CIImage, width: Int, height: Int) -> [Float] {
+        var pixels = [Float](repeating: 0, count: width * height * 4)
+        context.render(image, toBitmap: &pixels, rowBytes: width * 16,
+                       bounds: CGRect(x: 0, y: 0, width: width, height: height),
+                       format: .RGBAf, colorSpace: nil)
+        var channel = [Float](repeating: 0, count: width * height)
+        for index in 0..<(width * height) { channel[index] = pixels[index * 4] }
+        return channel
+    }
 
-    /// The mask's average value, which for a mask is the share of the frame it
-    /// covers.
-    private static func averageBrightness(of mask: CIImage) -> CGFloat? {
-        let average = mask.applyingFilter("CIAreaAverage", parameters: [
-            kCIInputExtentKey: CIVector(cgRect: mask.extent),
-        ])
-        var pixel = [Float](repeating: 0, count: 4)
-        context.render(average,
-                       toBitmap: &pixel,
-                       rowBytes: 16,
-                       bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-                       format: .RGBAf,
-                       colorSpace: nil)
-        guard pixel[0].isFinite else { return nil }
-        return CGFloat(pixel[0])
+    // MARK: - Cutting
+
+    /// Divide the photo into `count` slabs by depth.
+    ///
+    /// Two passes over the pixels rather than one pass per slab: the first works
+    /// out how big each slab's image needs to be, the second fills them. A pixel
+    /// belongs to every slab within `gradient * step` of its own depth, which is
+    /// the overlap that stops a gap opening when the nearer slab moves further.
+    private static func cut(_ image: CGImage, by depth: DepthField,
+                            into count: Int, step: CGFloat) -> [PhotoBand] {
+        guard let data = image.dataProvider?.data,
+              let source = CFDataGetBytePtr(data)
+        else { return [] }
+        let bytesPerRow = image.bytesPerRow
+        let bytesPerPixel = image.bitsPerPixel / 8
+        guard bytesPerPixel >= 3 else { return [] }
+        // Where the red channel sits in whatever layout the decoder gave us.
+        let alphaFirst = image.alphaInfo == .premultipliedFirst
+            || image.alphaInfo == .first || image.alphaInfo == .noneSkipFirst
+        let red = alphaFirst ? 1 : 0
+        let width = depth.width, height = depth.height
+
+        func span(_ index: Int) -> ClosedRange<Int> {
+            let value = CGFloat(depth.values[index])
+            let reach = CGFloat(depth.gradient[index]) * step
+            let low = Int(((value - reach) * CGFloat(count)).rounded(.down))
+            let high = Int(((value + reach) * CGFloat(count)).rounded(.down))
+            return max(0, min(count - 1, low))...max(0, min(count - 1, high))
+        }
+
+        var minX = [Int](repeating: width, count: count)
+        var maxX = [Int](repeating: -1, count: count)
+        var minY = [Int](repeating: height, count: count)
+        var maxY = [Int](repeating: -1, count: count)
+        for y in 0..<height {
+            let row = y * width
+            for x in 0..<width {
+                for band in span(row + x) {
+                    if x < minX[band] { minX[band] = x }
+                    if x > maxX[band] { maxX[band] = x }
+                    if y < minY[band] { minY[band] = y }
+                    if y > maxY[band] { maxY[band] = y }
+                }
+            }
+        }
+
+        var buffers: [Int: [UInt8]] = [:]
+        for band in 0..<count where maxX[band] >= minX[band] {
+            let w = maxX[band] - minX[band] + 1, h = maxY[band] - minY[band] + 1
+            buffers[band] = [UInt8](repeating: 0, count: w * h * 4)
+        }
+        for y in 0..<height {
+            let row = y * width
+            for x in 0..<width {
+                let from = y * bytesPerRow + x * bytesPerPixel
+                for band in span(row + x) {
+                    guard maxX[band] >= minX[band] else { continue }
+                    let w = maxX[band] - minX[band] + 1
+                    let to = ((y - minY[band]) * w + (x - minX[band])) * 4
+                    buffers[band]?[to] = source[from + red]
+                    buffers[band]?[to + 1] = source[from + red + 1]
+                    buffers[band]?[to + 2] = source[from + red + 2]
+                    buffers[band]?[to + 3] = 255
+                }
+            }
+        }
+
+        var bands: [PhotoBand] = []
+        for band in 0..<count {
+            guard maxX[band] >= minX[band], let pixels = buffers[band] else { continue }
+            let w = maxX[band] - minX[band] + 1, h = maxY[band] - minY[band] + 1
+            guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+                  let cropped = CGImage(
+                      width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32,
+                      bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                      provider: provider, decode: nil, shouldInterpolate: true,
+                      intent: .defaultIntent)
+            else { continue }
+            bands.append(PhotoBand(image: cropped,
+                                   origin: CGPoint(x: minX[band], y: minY[band]),
+                                   depth: (CGFloat(band) + 0.5) / CGFloat(count)))
+        }
+        return bands
     }
 }
