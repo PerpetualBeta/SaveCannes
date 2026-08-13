@@ -1,6 +1,6 @@
 # Save Cannes
 
-Plays your own videos as a macOS screensaver. Point it at a film, or at a folder of them, and it takes over every display when your Mac goes quiet.
+Plays your own videos as a macOS screensaver. Point it at films, folders of them, or a live stream, and it takes over every display when your Mac goes quiet.
 
 A tribute to [Save Hollywood](http://s.sudre.free.fr/Software/SaveHollywood/about.html) by WhiteBox — the much-loved saver that did exactly this, until macOS broke it. Same idea, rebuilt from scratch on the modern Jorvik screensaver pattern.
 
@@ -42,8 +42,9 @@ As a regular app it gets out of its own way: it asks for your folder, plays from
 
 When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss.
 
-- **One file** plays on loop.
+- **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
+- **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
 - **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
 - **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
 - **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
@@ -53,7 +54,8 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 Click the menu bar icon → **Settings…** for:
 
 - **Permissions** — accessibility status (required only if you enable Lock Screen on dismiss)
-- **Video** — the source (a file or a folder, with a count of what was found), playback order, and sound
+- **Sources** — the folders, files and streams to play, each with an include-in-playback switch and a count of what was found
+- **Playback** — order, and sound
 - **Display** — how each video is fitted to the screen, and whether every display shows the same one
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, and a global "Play now" hotkey
@@ -64,10 +66,24 @@ Click the menu bar icon → **Settings…** for:
 
 All settings persist immediately, no Save/OK button. Changes apply the next time the saver comes up, which is always — using Settings dismisses it.
 
+### Sources
+
+Add as many as you like, of three kinds:
+
+- **Folders** are walked recursively, so subfolders are included and a library organised one-folder-per-film needs no flattening. Hidden files are skipped, and bundles (a `.photoslibrary`, an `.app`) aren't opened up.
+- **Files** are single videos, played on loop when they're the only source.
+- **Streams** are URLs handed straight to the player. That means they have to be something it can open by itself — an **HLS `.m3u8`** or a **direct MP4** — not a web page it would have to scrape, which rules out YouTube and the like by design rather than by omission. Only `http` and `https` are accepted, because those are the schemes that actually play; offering others would mean offering something that silently never works.
+
+Each source has a switch. Turning one off leaves it in the list, which is the point: the alternative is deleting a source to stop playing it and then having to find it again. A source that's off is dimmed and its videos are excluded from the playlist, though its count still shows so you know what you're switching back on.
+
+Removing a source is the minus button beside it. Nothing is ever moved or altered on disk — Save Cannes only ever reads.
+
+> **A note on protected folders.** If a folder lives in Desktop, Documents or Downloads, macOS asks permission the first time. Save Cannes triggers that prompt as you add it, while you're looking at Settings, rather than later from behind a fullscreen saver where you couldn't see it.
+
 ### Playback order
 
-- **Random** — shuffled, and reshuffled every time it works through the folder, so you don't get the same running order twice.
-- **Sequential** — alphabetical, by path. In a flat folder that's plain filename order; where there are subfolders, each folder's videos stay together and play in order. Every display plays the same video, in step — see **Multiple displays** below.
+- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice.
+- **Sequential** — each source in turn, in the order they're listed, and each source's videos in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
 
 ### Size on screen
 
@@ -123,6 +139,8 @@ Set a hotkey under Settings → Capture and press it while the saver is playing.
 
 The frame is pulled from the video file rather than grabbed off the screen, so you get the whole frame at the video's own resolution — a screenshot taken in "full screen" mode isn't cropped to the shape of whichever display it happened to be playing on.
 
+That also means a **live stream can't be captured**: there's no file to seek into. On-demand streams are fine.
+
 ## Auto-update
 
 Save Cannes uses [Sparkle 2.x](https://sparkle-project.org/) for auto-update. Updates check daily against `https://jorviksoftware.cc/appcasts/savecannes.xml`. Trigger a manual check via the menu's **Check for Updates…** item.
@@ -137,11 +155,11 @@ Updates are EdDSA-signed; your copy will only install genuine Jorvik Software re
 
 ## Architecture
 
-- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), source resolution (`VideoLibrary`), the title caption (`TitleOverlay`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration.
+- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), the source list and its storage (`VideoSource`), source resolution (`VideoLibrary`), the title caption (`TitleOverlay`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration.
 - **JorvikKit** (`App/JorvikKit/`) — vendored shared components from the Jorvik suite (About modal, Settings frame, shortcut recorder, Sparkle focus guard, localisation shim, window helper).
 - **Sparkle** (`Sparkle.framework`) — vendored 2.9.1 binary, embedded under `Contents/Frameworks/`.
 
-Playback is `AVPlayer` into an `AVPlayerLayer`, one per display, walking a playlist read fresh from disk on every activation. Whether displays match is a matter of which list they walk: one shared array, ordered once at activation, or one array per display. (Sharing a single `AVPlayer` across layers isn't an option — only the most recently created `AVPlayerLayer` renders.) Whether the per-display option is available at all is one property, `PlaybackOrder.allowsDifferentVideoPerDisplay`, read by both the engine and the Settings toggle so they can't disagree. The three size options are two `videoGravity` values plus, for original size, a layer frame computed from the video's pixel dimensions divided by the display's backing scale.
+Playback is `AVPlayer` into an `AVPlayerLayer`, one per display, walking a playlist read fresh on every activation — folders walked then, so adding files takes effect next time the saver comes up. A stream is the same `AVPlayerItem` with a remote URL, which is why streams cost almost no extra code: the skip-on-failure path, the watchdog and the ordering all treat them like anything else. Whether displays match is a matter of which list they walk: one shared array, ordered once at activation, or one array per display. (Sharing a single `AVPlayer` across layers isn't an option — only the most recently created `AVPlayerLayer` renders.) Whether the per-display option is available at all is one property, `PlaybackOrder.allowsDifferentVideoPerDisplay`, read by both the engine and the Settings toggle so they can't disagree. The three size options are two `videoGravity` values plus, for original size, a layer frame computed from the video's pixel dimensions divided by the display's backing scale.
 
 "Screensaver delivered as a regular `.app`" is the default shape for Jorvik screensavers, established by [Rainy Day](https://jorviksoftware.cc/screensavers/rainyday) and followed by [ASCII Saver](https://jorviksoftware.cc/screensavers/asciisaver).
 
@@ -164,6 +182,10 @@ Save Cannes builds via the shared Jorvik `release.mk`. With the `jorvik-release`
 ## Troubleshooting
 
 **Nothing plays, and the screen says "No video source chosen".** Open Settings → Video and choose a file or folder.
+
+**A stream won't play.** Paste the URL into Safari or QuickTime Player — if they can't play it either, it isn't a media URL, and Save Cannes hands URLs to the same underlying player. A page that *shows* a video is not the same as the video's own address.
+
+**Everything is switched off.** The saver says so explicitly rather than claiming there are no videos, because those need different fixes.
 
 **The folder is right but it says no videos were found.** Save Cannes lists files by type, not by extension. If the files aren't recognised as movies by macOS — check one in Finder's Get Info — they won't be listed. An external drive that isn't mounted looks the same as an empty folder.
 
