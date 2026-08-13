@@ -14,14 +14,26 @@ import Vision
 /// enough for the thing that reads as depth — the subject coming towards you
 /// faster than the scene it stands in.
 ///
-/// Nothing is invented here, and that is the whole design. The subject grows
-/// about the point where it meets the world, so it always covers the shape it was
-/// cut from: the photo behind it never needs a patch, because no part of the hole
-/// is ever on screen. An earlier version filled that hole with a smeared copy of
-/// the photo, and every soft pixel at the edge of the subject then blended with
-/// the smear instead of with the scenery — which is a blurred halo round the
-/// subject, put there by the fix for a problem that doesn't exist.
+/// Growing the subject about its contact point covers most of the shape it was
+/// cut from, but not all of it, and the exception is worth stating because it
+/// decides the design. Growing moves a point away from the anchor, so a hand at
+/// the end of an outstretched arm ends up further out — and the place it came
+/// from is only covered if the point a sixth of the way back towards the feet is
+/// also part of the subject. For a hand held away from the body it isn't; it is
+/// beside the waist, in the background. So the original arm stays visible next to
+/// the grown one, and a woman crossing a road has four of them.
+///
+/// The scene therefore does need the subject taken out of it. What it must not do
+/// is take it out all the way to the edge: the mask has a soft edge, and a
+/// half-transparent pixel of subject sitting over invented scenery is a blurred
+/// halo all the way round. So the patch stops short of the edge by the width of
+/// that soft edge, and the last couple of pixels of the scene are the photo's own.
+/// The subject's soft edge lands on the pixels it was made of, and what is left
+/// exposed beside a grown arm is a hairline of the original rather than the arm.
 struct PhotoLayers: @unchecked Sendable {
+    /// The photo with the subject taken out of it, stopping short of the subject's
+    /// own edge. What is behind the subject when it grows past where it was.
+    let scene: CGImage
     /// The subject alone, everything else transparent. Same size as the photo, so
     /// it lines up with it without any arithmetic.
     let subject: CGImage
@@ -85,18 +97,91 @@ enum PhotoParallax {
               let anchor = contactPoint(of: mask)
         else { return nil }
 
-        // The mask exactly as Vision drew it, soft edge and all. Neither grown nor
-        // shrunk: the subject is going to be drawn over the photo it came out of,
-        // so a half-transparent pixel at its edge lands on the pixel it was
-        // half-made of, and the join cannot be seen.
+        // Three masks, because the three jobs want different edges, and using one
+        // for all of them is what produced first a halo and then four arms.
+        //
+        // How far apart they are is not a matter of taste: the mask is only as
+        // precise as the resolution it was computed at, which the unscaled
+        // `instanceMask` states, and its soft edge is about two of those pixels
+        // wide once scaled up to the photo. That is the distance.
+        let maskWidth = CGFloat(CVPixelBufferGetWidth(observation.instanceMask))
+        let ramp = maskWidth > 0 ? 2 * photo.extent.width / maskWidth : 2
+        // Grown, to work out what the scenery behind the subject looks like: the
+        // bleed should pull in scenery, not the subject's own edge colours.
+        let outside = mask.applyingFilter("CIMorphologyMaximum",
+                                         parameters: [kCIInputRadiusKey: ramp])
+        // Shrunk, to decide where that goes: stopping short of the edge is what
+        // keeps the subject's soft pixels off it.
+        let inside = mask.applyingFilter("CIMorphologyMinimum",
+                                        parameters: [kCIInputRadiusKey: ramp])
+
+        guard let fill = sceneBehindSubject(photo: photo, hole: outside, share: share)
+        else { return nil }
+        let scene = fill.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: photo,
+            kCIInputMaskImageKey: inside,
+        ])
+        // And the mask exactly as Vision drew it for the subject itself.
         let clear = CIImage(color: .clear).cropped(to: photo.extent)
         let subject = photo.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: clear,
             kCIInputMaskImageKey: mask,
         ])
-        guard let subjectImage = context.createCGImage(subject, from: photo.extent) else { return nil }
-        return PhotoLayers(subject: subjectImage, subjectShare: share, anchor: anchor)
+
+        guard let sceneImage = context.createCGImage(scene, from: photo.extent),
+              let subjectImage = context.createCGImage(subject, from: photo.extent)
+        else { return nil }
+        return PhotoLayers(scene: sceneImage, subject: subjectImage,
+                           subjectShare: share, anchor: anchor)
     }
+
+    /// What to put where the subject was.
+    ///
+    /// The subject is cut out, leaving a transparent hole, and the result is
+    /// blurred: a blur works on premultiplied colour, so the scenery around the
+    /// hole bleeds into it, and undoing the premultiplication turns that back into
+    /// colour. Far enough into a large hole the bleed runs out of alpha to divide
+    /// by, so the whole thing sits on top of a heavily smeared copy of the photo,
+    /// which has no holes in it and so always has something to say.
+    ///
+    /// Computed at a fraction of the photo's size. A fill defined as "no detail"
+    /// does not need the photo's resolution, and the blur that produces it is the
+    /// one expensive step here.
+    private static func sceneBehindSubject(photo: CIImage, hole: CIImage,
+                                          share: CGFloat) -> CIImage? {
+        let extent = photo.extent
+        // Enough reach to get from the edge of the subject to the middle of it,
+        // taken as the radius of a disc of the same area — no bounding box needed,
+        // and it scales with the subject rather than being picked.
+        let reach = (share * extent.width * extent.height / .pi).squareRoot()
+        let working = min(1, fillWorkingEdge / max(extent.width, extent.height))
+        let shrink = CGAffineTransform(scaleX: working, y: working)
+
+        let smallPhoto = photo.transformed(by: shrink)
+        let smallHole = hole.transformed(by: shrink)
+        let clear = CIImage(color: .clear).cropped(to: smallPhoto.extent)
+        let holed = clear.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: smallPhoto,
+            kCIInputMaskImageKey: smallHole,
+        ])
+        let bled = holed.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: reach * working])
+            .cropped(to: smallPhoto.extent)
+            .unpremultiplyingAlpha()
+        // The floor under the bleed: the photo reduced until nothing of the subject
+        // survives as shape, only as colour.
+        let floor = smallPhoto
+            .clampedToExtent()
+            .applyingFilter("CIGaussianBlur",
+                            parameters: [kCIInputRadiusKey: smallPhoto.extent.width / 8])
+            .cropped(to: smallPhoto.extent)
+        return bled.composited(over: floor)
+            .transformed(by: CGAffineTransform(scaleX: 1 / working, y: 1 / working))
+    }
+
+    /// The long edge, in pixels, the fill is computed at. See `sceneBehindSubject`
+    /// for why this is small.
+    private static let fillWorkingEdge: CGFloat = 320
 
     /// The middle of the subject across, and the foot of it up.
     ///

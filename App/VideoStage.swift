@@ -454,10 +454,10 @@ final class VideoStage: NSView {
         // photo underneath reads as a glitch rather than a transition.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        // The photo underneath is the photo, untouched, whether or not a subject
-        // was lifted off it: the lifted copy on top always covers the part of it
-        // that it came from. See `PhotoLayers`.
-        stillLayer.contents = decoded.image
+        // With a subject lifted, the layer underneath is the photo with that
+        // subject taken out of it as far as its own edge — see `PhotoLayers` for
+        // why it stops there and not at the edge itself.
+        stillLayer.contents = decoded.layers?.scene ?? decoded.image
         subjectLayer.contents = decoded.layers?.subject
         subjectLayer.isHidden = decoded.layers == nil
         layoutStillLayer()
