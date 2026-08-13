@@ -145,7 +145,10 @@ struct SaveCannesSettingsContent: View {
                 TextField("", text: $newURL,
                           prompt: Text(L10n.string("settings.stream_placeholder",
                                                    defaultValue: "https://… .m3u8 or .mp4")))
-                    .textFieldStyle(.roundedBorder)
+                    // No `.roundedBorder`: that AppKit bezel is taller and heavier than
+                    // the field style a Form gives its own rows, so it sat proud of the
+                    // label and the button beside it. Four layouts were rendered and
+                    // compared by eye; the Form's own style is the one that lines up.
                     .onSubmit { addStream() }
                 Button(L10n.string("settings.add_stream", defaultValue: "Add")) { addStream() }
                     .disabled(VideoSource.forTypedURL(newURL) == nil)
