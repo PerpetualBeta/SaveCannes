@@ -145,6 +145,8 @@ final class ScreensaverWindow {
         stage.photoSeconds = defs.integer(forKey: "photoSeconds")
         stage.kenBurnsEnabled = defs.bool(forKey: "kenBurnsEnabled")
         stage.kenBurnsZoom = CGFloat(defs.double(forKey: "kenBurnsZoom"))
+        stage.parallaxEnabled = defs.bool(forKey: "parallaxEnabled")
+        stage.parallaxStrength = CGFloat(defs.double(forKey: "parallaxStrength"))
 
         container.addSubview(stage)
         scLog("ScreensaverWindow built for \(screen.localizedName), audio=\(audioEnabled)")

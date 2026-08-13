@@ -49,6 +49,11 @@ final class VideoStage: NSView {
     /// How far a photo is zoomed by the end of its pan, which also sets how far
     /// the pan can travel — see `photoZoom`.
     var kenBurnsZoom = VideoStage.defaultKenBurnsZoom
+    /// Whether the subject of a photo is lifted off its background and moved
+    /// separately — see `PhotoParallax`. Off while it is being judged.
+    var parallaxEnabled = false
+    /// How much further the subject travels than the scene behind it.
+    var parallaxStrength = VideoStage.defaultParallaxStrength
 
     private let player = AVPlayer()
     private let playerLayer = AVPlayerLayer()
@@ -57,6 +62,10 @@ final class VideoStage: NSView {
     /// completely different ways and swapping between them is then just a
     /// matter of which one is hidden.
     private let stillLayer = CALayer()
+    /// The subject of the photo, cut out and drawn over `stillLayer`, when the
+    /// photo has one and the effect is on. Hidden otherwise, which is what
+    /// `startKenBurns` reads to decide whether there is a near plane to move.
+    private let subjectLayer = CALayer()
     /// Advances off a photo. The video path is driven by the player reaching the
     /// end of its item; a still would sit there forever, so it gets a clock.
     private var stillTimer: Timer?
@@ -119,6 +128,10 @@ final class VideoStage: NSView {
         stillLayer.magnificationFilter = .trilinear
         stillLayer.isHidden = true
         layer?.addSublayer(stillLayer)
+        subjectLayer.minificationFilter = .trilinear
+        subjectLayer.magnificationFilter = .trilinear
+        subjectLayer.isHidden = true
+        layer?.addSublayer(subjectLayer)
         // Sized here, and again in `layout()`. An autoresizing mask alone
         // isn't enough: it only fires when the superview *changes* size, and
         // this view is created at its final size, so a subview added at
@@ -145,6 +158,8 @@ final class VideoStage: NSView {
         // never visible at once, so their order relative to each other is only
         // about keeping both of them under the text.
         if stillLayer.superlayer === layer { layer.insertSublayer(stillLayer, at: 1) }
+        // Directly over the photo it was cut out of, and still under the caption.
+        if subjectLayer.superlayer === layer { layer.insertSublayer(subjectLayer, at: 2) }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -345,6 +360,19 @@ final class VideoStage: NSView {
     /// starts costing more than twice the pixels the display can show, and where
     /// a photo that only just covered the screen begins to look soft.
     static let kenBurnsZoomRange: ClosedRange<CGFloat> = 1...1.5
+
+    /// How much further a lifted subject travels than the scene behind it, as a
+    /// fraction of the scene's own move.
+    ///
+    /// Deliberately small. What is revealed from behind a subject that has moved
+    /// is a smear rather than real scenery — there is no photograph of what was
+    /// behind it — so the further the subject travels, the more of that smear
+    /// comes out from behind it. This is the distance at which the seam stays
+    /// under the subject.
+    static let defaultParallaxStrength: CGFloat = 0.6
+    /// What a stored strength is allowed to be. Zero is the effect off; the top
+    /// is where the smear behind the subject stops being hidden by it.
+    static let parallaxStrengthRange: ClosedRange<CGFloat> = 0...2
     /// How much of the available overscan a pan may spend. Short of all of it so
     /// rounding can't put an edge exactly on the boundary.
     private static let panBudgetFraction: CGFloat = 0.75
@@ -372,6 +400,20 @@ final class VideoStage: NSView {
             Self.kenBurnsZoomRange.upperBound)
     }
 
+    /// Clamped for the same reason as `photoZoom`: a value that arrived from disk
+    /// shouldn't be able to fling the subject off the scene it belongs to.
+    private var photoParallaxStrength: CGFloat {
+        min(max(parallaxStrength, Self.parallaxStrengthRange.lowerBound),
+            Self.parallaxStrengthRange.upperBound)
+    }
+
+    /// Whether a photo's subject is being lifted right now. Tied to the pan: with
+    /// no movement there is no difference in movement to see, and the split would
+    /// cost a Vision request for nothing.
+    private var liftingSubjects: Bool {
+        parallaxEnabled && panningPhotos
+    }
+
     /// Put one photo on screen, or skip to the next candidate.
     @MainActor
     private func presentStill(_ url: URL) async {
@@ -381,8 +423,9 @@ final class VideoStage: NSView {
         // and buys nothing — the screen cannot show it.
         let target = CGSize(width: bounds.width * scale * photoZoom,
                             height: bounds.height * scale * photoZoom)
+        let splitting = liftingSubjects
         let decoded = await Task.detached(priority: .userInitiated) {
-            Self.decode(url, covering: target)
+            Self.decode(url, covering: target, splittingSubject: splitting)
         }.value
         // The saver may have been dismissed while the photo was being read.
         guard running else { return }
@@ -406,7 +449,12 @@ final class VideoStage: NSView {
         // photo underneath reads as a glitch rather than a transition.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        stillLayer.contents = decoded.image
+        // With a subject to lift, the layer underneath holds the scene with the
+        // subject smeared out of it, and the subject goes on top. Without one,
+        // the photo is one layer as before.
+        stillLayer.contents = decoded.layers?.scene ?? decoded.image
+        subjectLayer.contents = decoded.layers?.subject
+        subjectLayer.isHidden = decoded.layers == nil
         layoutStillLayer()
         CATransaction.commit()
         startKenBurns()
@@ -417,7 +465,10 @@ final class VideoStage: NSView {
               + (panningPhotos ? ", panning" : "")
               + (decoded.focus.map {
                   String(format: ", focus %.2f,%.2f", $0.point.x, $0.point.y)
-              } ?? ", no focus found"))
+              } ?? ", no focus found")
+              + (decoded.layers.map {
+                  String(format: ", subject lifted (%.0f%% of frame)", $0.subjectShare * 100)
+              } ?? (liftingSubjects ? ", no subject to lift" : "")))
         currentCaption = (decoded.title, decoded.copyright)
         showCaption()
         startTitleTimer()
@@ -446,6 +497,10 @@ final class VideoStage: NSView {
         stillLayer.transform = CATransform3DIdentity
         stillLayer.contents = nil
         stillLayer.isHidden = true
+        subjectLayer.removeAnimation(forKey: Self.kenBurnsKey)
+        subjectLayer.transform = CATransform3DIdentity
+        subjectLayer.contents = nil
+        subjectLayer.isHidden = true
         currentStill = nil
         currentFocus = nil
         playerLayer.isHidden = false
@@ -459,8 +514,10 @@ final class VideoStage: NSView {
     /// snapping back: the photo is still on screen when the animation ends if
     /// the duration and the timer ever disagree by a frame.
     private func startKenBurns() {
-        stillLayer.removeAnimation(forKey: Self.kenBurnsKey)
-        stillLayer.transform = CATransform3DIdentity
+        for layer in [stillLayer, subjectLayer] {
+            layer.removeAnimation(forKey: Self.kenBurnsKey)
+            layer.transform = CATransform3DIdentity
+        }
         guard panningPhotos else { return }
 
         let zoom = photoZoom
@@ -471,13 +528,33 @@ final class VideoStage: NSView {
             layerFrame: stillLayer.frame, in: bounds, zoom: zoom,
             budgetFraction: Self.panBudgetFraction, focus: currentFocus,
             fallbackAngle: .random(in: 0..<(2 * .pi)))
-        let zoomed = CATransform3DConcat(
-            CATransform3DMakeScale(zoom, zoom, 1),
-            CATransform3DMakeTranslation(offset.x, offset.y, 0))
         // Half of them zoom out rather than in, so a run of photos doesn't feel
         // like one repeated camera move.
         let inward = Bool.random()
+        animate(stillLayer, to: zoom, offset: offset, inward: inward)
 
+        // The subject, when there is one, travels the same path further: nearer
+        // things move more in a real camera move, and that difference is the
+        // whole of the effect. Both layers start from the identity, so they are
+        // exactly registered at the near end of the move and drift apart towards
+        // the far end — which is also why the seam behind the subject is at its
+        // most hidden at the moment there is most to see.
+        guard !subjectLayer.isHidden else { return }
+        let strength = photoParallaxStrength
+        animate(subjectLayer, to: 1 + (zoom - 1) * (1 + strength),
+                offset: CGPoint(x: offset.x * (1 + strength), y: offset.y * (1 + strength)),
+                inward: inward)
+    }
+
+    /// The move itself, applied to one layer.
+    ///
+    /// Held at its end state (`fillMode`, `isRemovedOnCompletion`) rather than
+    /// snapping back: the photo is still on screen when the animation ends if
+    /// the duration and the timer ever disagree by a frame.
+    private func animate(_ layer: CALayer, to zoom: CGFloat, offset: CGPoint, inward: Bool) {
+        let zoomed = CATransform3DConcat(
+            CATransform3DMakeScale(zoom, zoom, 1),
+            CATransform3DMakeTranslation(offset.x, offset.y, 0))
         let move = CABasicAnimation(keyPath: "transform")
         // The pan starts from the unzoomed state, where there is no overscan and
         // therefore no offset — the offset only exists in the zoomed state, so
@@ -491,7 +568,7 @@ final class VideoStage: NSView {
         move.timingFunction = CAMediaTimingFunction(name: .linear)
         move.fillMode = .forwards
         move.isRemovedOnCompletion = false
-        stillLayer.add(move, forKey: Self.kenBurnsKey)
+        layer.add(move, forKey: Self.kenBurnsKey)
     }
 
     /// One photo, decoded and captioned. `@unchecked Sendable` because it
@@ -503,6 +580,9 @@ final class VideoStage: NSView {
         let copyright: String?
         /// Where the eye goes, or nil if Vision had no answer.
         let focus: PhotoFocus?
+        /// The subject and the scene behind it, when the photo has a subject
+        /// worth lifting and the effect is on.
+        let layers: PhotoLayers?
     }
 
     /// Read one photo at no more resolution than `covering` needs, with its EXIF
@@ -513,7 +593,8 @@ final class VideoStage: NSView {
     /// (`WithTransform`), and it takes a size cap. A phone photo decoded without
     /// that transform is displayed on its side — the still-image version of the
     /// `preferredTransform` problem `pixelSize(of:)` solves for video.
-    nonisolated private static func decode(_ url: URL, covering target: CGSize) -> DecodedStill? {
+    nonisolated private static func decode(_ url: URL, covering target: CGSize,
+                                           splittingSubject: Bool) -> DecodedStill? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let options: [CFString: Any] = [
@@ -534,7 +615,8 @@ final class VideoStage: NSView {
         return DecodedStill(image: image,
                             title: embeddedTitle(properties) ?? filename,
                             copyright: embeddedCopyright(properties),
-                            focus: PhotoFocus.detect(in: image))
+                            focus: PhotoFocus.detect(in: image),
+                            layers: splittingSubject ? PhotoParallax.layers(for: image) : nil)
     }
 
     /// The largest edge worth decoding.
@@ -858,9 +940,11 @@ final class VideoStage: NSView {
         case .fitToScreen:
             stillLayer.contentsGravity = .resizeAspect
             stillLayer.frame = bounds
+            matchSubjectToPhoto()
         case .originalSize:
             stillLayer.contentsGravity = .resizeAspect
             stillLayer.frame = originalSizeFrame()
+            matchSubjectToPhoto()
         }
     }
 
@@ -882,6 +966,15 @@ final class VideoStage: NSView {
         stillLayer.frame = PhotoFraming.fillFrame(
             imageSize: CGSize(width: image.width, height: image.height),
             in: bounds, focus: currentFocus)
+        matchSubjectToPhoto()
+    }
+
+    /// The subject sits in exactly the frame the photo does — it was cut out of
+    /// it at the same size, so anything else would put it somewhere it wasn't.
+    /// Its transform is what differs, not its geometry.
+    private func matchSubjectToPhoto() {
+        subjectLayer.contentsGravity = stillLayer.contentsGravity
+        subjectLayer.frame = stillLayer.frame
     }
 
     /// One video pixel per screen pixel, centred on black.
