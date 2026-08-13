@@ -22,7 +22,6 @@ enum SettingsWindow {
 /// JorvikSettingsView).
 struct SaveCannesSettingsContent: View {
 
-    @AppStorage(VideoLibrary.sourcePathKey) private var sourcePath: String = ""
     @AppStorage("playbackOrder")  private var order: PlaybackOrder = .random
     @AppStorage("videoScaling")   private var scaling: VideoScaling = .fullScreen
     @AppStorage("soundEnabled")   private var soundEnabled: Bool = false
@@ -32,9 +31,15 @@ struct SaveCannesSettingsContent: View {
     @AppStorage("idleMinutes")    private var idleMinutes: Int = 5
     @AppStorage("lockOnDismiss")  private var lockOnDismiss: Bool = false
 
-    /// How many playable-looking videos the current source holds. nil while
-    /// the count is still being taken.
-    @State private var videoCount: Int?
+    /// The registered sources, held in view state so the list reorders and
+    /// toggles without a round-trip through UserDefaults on every keystroke.
+    /// Written back through `commit` on every change.
+    @State private var sources: [VideoSource] = SourceStore.load()
+    /// Videos found per source, keyed by id. Absent while a count is in flight —
+    /// a folder of thousands takes a moment and mustn't block the window.
+    @State private var counts: [UUID: Int] = [:]
+    /// The stream field's contents, and whether what's in it can be played.
+    @State private var newURL: String = ""
 
     /// AXIsProcessTrusted flips immediately after the user grants access in
     /// System Settings, but SwiftUI doesn't see the change without a redraw
@@ -67,31 +72,84 @@ struct SaveCannesSettingsContent: View {
 
         MenuBarVisibilitySettings()
 
-        Section(L10n.string("settings.video", defaultValue: "Video")) {
-            HStack {
-                Text(L10n.string("settings.source", defaultValue: "Source:"))
-                Text(sourceDisplayName)
-                    .foregroundStyle(sourcePath.isEmpty ? .secondary : .primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button(L10n.string("settings.choose", defaultValue: "Choose…")) {
-                    chooseSource()
-                }
-                .font(.caption)
+        Section(L10n.string("settings.sources", defaultValue: "Sources")) {
+            if sources.isEmpty {
+                Text(L10n.string("settings.no_sources",
+                                 defaultValue: "Nothing to play yet. Add a folder, a file, or the URL of a stream."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Text(sourceSummary)
+            ForEach($sources) { $source in
+                HStack(spacing: 8) {
+                    Image(systemName: source.symbolName)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(source.displayName)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            // Dimmed when excluded: the toggle alone is a small
+                            // target to read a whole row's state from.
+                            .foregroundStyle(source.isEnabled ? .primary : .secondary)
+                        Text(countLine(source))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        remove(source)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help(L10n.string("settings.remove_source", defaultValue: "Remove this source"))
+                    // The toggle is "include in playback" — it leaves the source
+                    // registered so switching it back on doesn't mean finding it
+                    // again.
+                    Toggle("", isOn: $source.isEnabled)
+                        .labelsHidden()
+                        .onChange(of: source.isEnabled) { commit() }
+                }
+            }
+
+            HStack {
+                Button(L10n.string("settings.add_folder", defaultValue: "Add Folders…")) { add(folders: true) }
+                Button(L10n.string("settings.add_files", defaultValue: "Add Files…")) { add(folders: false) }
+                Spacer()
+            }
+            .font(.caption)
+
+            HStack {
+                TextField(L10n.string("settings.stream_label", defaultValue: "Stream:"),
+                          text: $newURL,
+                          prompt: Text(L10n.string("settings.stream_placeholder",
+                                                   defaultValue: "https://… .m3u8 or .mp4")))
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { addStream() }
+                Button(L10n.string("settings.add_stream", defaultValue: "Add")) { addStream() }
+                    .disabled(VideoSource.forTypedURL(newURL) == nil)
+            }
+            .font(.caption)
+            Text(L10n.string("settings.stream_note",
+                             defaultValue: "A stream is handed straight to the player, so it has to be something it can open: an HLS .m3u8 or a direct MP4, not a web page it would have to scrape. A live stream has no end, so it plays until you dismiss the saver, and a frame grab of one isn't possible."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
 
+        Section(L10n.string("settings.playback", defaultValue: "Playback")) {
             Picker(L10n.string("settings.order", defaultValue: "Order:"), selection: $order) {
                 Text(L10n.string("settings.order_random", defaultValue: "Random"))
                     .tag(PlaybackOrder.random)
-                Text(L10n.string("settings.order_sequential", defaultValue: "Sequential, by filename"))
+                Text(L10n.string("settings.order_sequential", defaultValue: "Sequential, by source"))
                     .tag(PlaybackOrder.sequential)
             }
-            // A single file has no order to play in.
-            .disabled(!VideoLibrary.sourceIsDirectory)
+            Text(L10n.string("settings.order_note",
+                             defaultValue: "Sequential plays each source in turn, in the order listed above, and each source's videos in path order — so a folder of folders stays together. Random shuffles everything from every switched-on source."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Toggle(L10n.string("settings.sound", defaultValue: "Play sound"), isOn: $soundEnabled)
             Text(L10n.string("settings.sound_note",
@@ -199,65 +257,86 @@ struct SaveCannesSettingsContent: View {
                           defaultValue: "Sequential order plays the same video on every display — in order means in order, everywhere.")
     }
 
-    // MARK: - Source
+    // MARK: - Sources
 
-    private var sourceDisplayName: String {
-        sourcePath.isEmpty
-            ? L10n.string("settings.no_source", defaultValue: "None chosen")
-            : URL(fileURLWithPath: sourcePath).lastPathComponent
-    }
-
-    /// What the saver will actually play, spelled out. A path alone doesn't
-    /// tell you whether the folder still has anything in it.
-    private var sourceSummary: String {
-        guard !sourcePath.isEmpty else {
-            return L10n.string("settings.source_hint",
-                               defaultValue: "Choose a video file, or a folder of them — subfolders included.")
-        }
-        guard let count = videoCount else {
+    /// The count line under a source's name: what it will contribute to
+    /// playback, or where it lives when there is nothing to count.
+    private func countLine(_ source: VideoSource) -> String {
+        if source.kind == .stream { return source.subtitle }
+        guard let count = counts[source.id] else {
             return L10n.string("settings.counting", defaultValue: "Counting…")
         }
         switch count {
-        case 0:  return L10n.string("settings.count_none", defaultValue: "No videos found here.")
-        case 1:  return L10n.string("settings.count_one", defaultValue: "1 video.")
-        default: return L10n.format("settings.count_many", defaultValue: "%d videos.", count)
+        case 0:  return L10n.string("settings.count_none", defaultValue: "No videos found here")
+        case 1:  return L10n.string("settings.count_one", defaultValue: "1 video")
+        default: return L10n.format("settings.count_many", defaultValue: "%d videos", count)
         }
     }
 
-    private func chooseSource() {
+    /// Persist and re-read. Everything that mutates `sources` ends here, so the
+    /// stored list and the list on screen can't drift apart.
+    private func commit() {
+        SourceStore.save(sources)
+        recount()
+    }
+
+    private func add(folders: Bool) {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.movie]
-        panel.message = L10n.string("settings.panel_message",
-                                    defaultValue: "Choose a video file, or a folder of video files")
-        panel.prompt = L10n.string("settings.panel_prompt", defaultValue: "Choose")
-        if !sourcePath.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: sourcePath).deletingLastPathComponent()
+        panel.canChooseFiles = !folders
+        panel.canChooseDirectories = folders
+        // Several at once: adding six folders one dialogue at a time is a chore
+        // nobody should be put through.
+        panel.allowsMultipleSelection = true
+        if !folders { panel.allowedContentTypes = [.movie] }
+        panel.message = folders
+            ? L10n.string("settings.panel_folders", defaultValue: "Choose folders of video files")
+            : L10n.string("settings.panel_files", defaultValue: "Choose video files")
+        panel.prompt = L10n.string("settings.panel_prompt", defaultValue: "Add")
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            let source = VideoSource.forPickedFile(at: url)
+            // Adding the same folder twice would double every video in it.
+            guard !sources.contains(where: { $0.location == source.location }) else { continue }
+            sources.append(source)
+            scLog("added source \(source.location)")
         }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        sourcePath = url.path
-        scLog("source set to \(url.path)")
         // Counting straight away does two jobs. It tells the user what the saver
         // will play, and — for a folder inside Desktop, Documents or Downloads —
         // it triggers the macOS file-access prompt now, while they're in the
         // foreground looking at Settings, rather than later from behind a
         // fullscreen saver where the prompt is invisible.
-        recount()
+        commit()
     }
 
-    /// Count off the main thread: a large library is thousands of directory
-    /// entries, and the count runs on every appearance of this view.
+    private func addStream() {
+        guard let source = VideoSource.forTypedURL(newURL) else { return }
+        guard !sources.contains(where: { $0.location == source.location }) else { newURL = ""; return }
+        sources.append(source)
+        newURL = ""
+        scLog("added stream \(source.location)")
+        commit()
+    }
+
+    private func remove(_ source: VideoSource) {
+        sources.removeAll { $0.id == source.id }
+        scLog("removed source \(source.location)")
+        commit()
+    }
+
+    /// Count each source off the main thread: a large library is thousands of
+    /// directory entries, and this runs on every appearance of the view.
     private func recount() {
-        guard !sourcePath.isEmpty else {
-            videoCount = nil
-            return
-        }
-        videoCount = nil
+        let snapshot = sources
+        counts = counts.filter { id, _ in snapshot.contains { $0.id == id } }
         Task.detached {
-            let count = VideoLibrary.playlist().count
-            await MainActor.run { videoCount = count }
+            var tally: [UUID: Int] = [:]
+            for source in snapshot where source.kind != .stream {
+                tally[source.id] = VideoLibrary.videos(in: source).count
+            }
+            // Handed over as a `let`: a captured `var` crossing into the main
+            // actor is a warning today and an error in Swift 6.
+            let found = tally
+            await MainActor.run { counts.merge(found) { _, new in new } }
         }
     }
 

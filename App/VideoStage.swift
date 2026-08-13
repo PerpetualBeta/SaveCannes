@@ -188,9 +188,8 @@ final class VideoStage: NSView {
         guard failuresSinceLastSuccess < candidatesInSource else {
             showNotice(L10n.format(
                 "stage.none_playable",
-                defaultValue: "None of the %d files in %@ could be played.",
-                candidatesInSource,
-                VideoLibrary.sourceURL?.lastPathComponent ?? "the chosen folder"))
+                defaultValue: "None of the %d videos from your sources could be played.",
+                candidatesInSource))
             return
         }
         let url = queue.removeFirst()
@@ -537,16 +536,27 @@ final class VideoStage: NSView {
     /// 5K panel alike.
     private static let noticeInsetRatio: CGFloat = 8
 
+    /// Three different situations, because "nothing is playing" has three
+    /// different fixes and a single message would send the user to the wrong
+    /// one. The switched-off case especially: a saver that says "no videos
+    /// found" when the videos are right there, merely unticked, is actively
+    /// misleading.
     private func emptySourceMessage() -> String {
-        guard let source = VideoLibrary.sourceURL else {
+        let all = VideoLibrary.sources
+        guard !all.isEmpty else {
             return L10n.string(
                 "stage.no_source",
-                defaultValue: "No video source chosen.\nPick a video file or a folder in Save Cannes ▸ Settings…")
+                defaultValue: "No video sources yet.\nAdd a folder, a file or a stream in Save Cannes ▸ Settings…")
         }
-        return L10n.format(
+        guard all.contains(where: \.isEnabled) else {
+            return L10n.format(
+                "stage.all_sources_off",
+                defaultValue: "All %d sources are switched off.\nTurn one on in Save Cannes ▸ Settings…",
+                all.count)
+        }
+        return L10n.string(
             "stage.no_videos",
-            defaultValue: "No videos found in %@.",
-            source.lastPathComponent)
+            defaultValue: "No videos found in the sources that are switched on.")
     }
 
     /// Centred white text on the black window — the same instinct as Rainy

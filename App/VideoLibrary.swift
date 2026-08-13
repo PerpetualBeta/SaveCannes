@@ -37,50 +37,60 @@ enum VideoScaling: Int {
     case originalSize = 2
 }
 
-/// The user's chosen video source — one file, or a folder of them — and the
-/// playlist it resolves to.
+/// The user's chosen sources — folders, files, streams — and the playlist they
+/// resolve to.
 ///
-/// The source is stored as a plain path rather than a security-scoped
-/// bookmark: Save Cannes isn't sandboxed, so a path is all it needs, and a
-/// path survives the user reorganising their library in ways a bookmark
-/// would silently follow (a bookmark tracks the file, which is the wrong
-/// behaviour when the setting means "whatever is in this folder now").
+/// Locations are stored as plain paths and URL strings rather than
+/// security-scoped bookmarks: Save Cannes isn't sandboxed, so a path is all it
+/// needs, and a path survives the user reorganising their library in ways a
+/// bookmark would silently follow (a bookmark tracks the file, which is the
+/// wrong behaviour when the setting means "whatever is in this folder now").
 enum VideoLibrary {
 
-    static let sourcePathKey = "sourcePath"
+    /// Every source the user has registered, in their order, enabled or not.
+    static var sources: [VideoSource] { SourceStore.load() }
 
-    /// The configured source, or nil when the user hasn't picked one yet.
-    /// Nothing here checks the path still exists — callers get an empty
-    /// playlist for a source that's been moved or unmounted, which is the
-    /// same outcome as an empty folder and needs no separate handling.
-    static var sourceURL: URL? {
-        let path = UserDefaults.standard.string(forKey: sourcePathKey) ?? ""
-        return path.isEmpty ? nil : URL(fileURLWithPath: path)
-    }
+    /// Just the ones switched on for playback.
+    static var enabledSources: [VideoSource] { sources.filter(\.isEnabled) }
 
-    static var sourceIsDirectory: Bool {
-        guard let url = sourceURL else { return false }
-        return (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-    }
-
-    /// The videos to play, alphabetically by path. A file source yields
-    /// itself; a folder yields every video beneath it, recursively, so a
-    /// library organised one-folder-per-film works without the user having
-    /// to flatten it.
+    /// Everything the enabled sources offer, in the order they will be played
+    /// in sequential mode.
     ///
-    /// Read fresh on every activation rather than cached, so adding or
-    /// removing files takes effect the next time the saver comes up.
+    /// Sorted **within** each source, with the sources kept in the user's own
+    /// order — so "sequential" means the first source's videos in path order,
+    /// then the second's. Sorting the combined list instead would interleave
+    /// two libraries by filename, which is nobody's intent when they added them
+    /// separately.
+    ///
+    /// Read fresh on every activation rather than cached, so adding or removing
+    /// files takes effect the next time the saver comes up.
     static func playlist() -> [URL] {
-        guard let url = sourceURL else { return [] }
-        guard sourceIsDirectory else { return isVideo(url) ? [url] : [] }
-        guard let walker = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.contentTypeKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return [] }
-        return walker.compactMap { $0 as? URL }
-            .filter(isVideo)
-            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        enabledSources.flatMap(videos(in:))
+    }
+
+    /// What one source resolves to, whether or not it's enabled — the settings
+    /// list needs a count for sources that are switched off too.
+    static func videos(in source: VideoSource) -> [URL] {
+        guard let url = source.url else { return [] }
+        switch source.kind {
+        case .stream:
+            // Handed to AVFoundation as-is. There is nothing to inspect: a
+            // remote URL has no file type to read, and whether it plays is a
+            // question only the player can answer — which it does, by failing
+            // the same way a corrupt file does and being skipped.
+            return [url]
+        case .file:
+            return isVideo(url) ? [url] : []
+        case .folder:
+            guard let walker = FileManager.default.enumerator(
+                at: url,
+                includingPropertiesForKeys: [.contentTypeKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { return [] }
+            return walker.compactMap { $0 as? URL }
+                .filter(isVideo)
+                .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        }
     }
 
     /// The playlist in the order it should be played: shuffled for random,
