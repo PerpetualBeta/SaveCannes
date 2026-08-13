@@ -27,11 +27,13 @@ PACKAGE_TYPE     := zip
 ALSO_SHIP_PKG    := true
 
 SWIFT_FRAMEWORKS := Cocoa AVFoundation CoreMedia CoreGraphics QuartzCore \
-                    UniformTypeIdentifiers ServiceManagement Carbon
+                    UniformTypeIdentifiers ServiceManagement Carbon \
+                    Vision CoreVideo
 
 SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift \
                     App/ScreensaverWindow.swift \
                     App/VideoStage.swift App/VideoLibrary.swift App/VideoSource.swift \
+                    App/PhotoFocus.swift \
                     App/TitleOverlay.swift \
                     App/StatusItem.swift App/SettingsWindow.swift \
                     App/HotkeyManager.swift \

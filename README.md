@@ -45,7 +45,7 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 - **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
-- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. Each is held for a few seconds and slowly panned and zoomed. See **Photos** below.
+- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. Each is held for a few seconds and slowly panned and zoomed, with both the movement and the crop aimed at whatever the picture is actually of. See **Photos** below.
 - **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
 - **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
 - **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
@@ -119,11 +119,23 @@ Photos in a source folder join the playlist alongside the videos, in the same or
 
 #### Pan and zoom (Ken Burns)
 
-On by default: each photo drifts slowly across the screen, zooming in or out, a different direction each time. The pan is derived from the zoom rather than set separately, so it can never move far enough to drag an edge of the photo into frame.
+On by default: each photo drifts slowly across the screen, zooming in or out. The pan is derived from the zoom rather than set separately, so it can never move far enough to drag an edge of the photo into frame.
 
-Because a pan needs somewhere to move into, **a panning photo fills the display and ignores the Size setting** above — that setting is about fitting a film to a screen. Switch panning off and photos obey it exactly like videos do, letterboxed or at original size as you've asked.
+**The movement is aimed at the subject.** Before a photo goes up, macOS's Vision framework is asked which part of it a person would look at, and the move ends with that part in the middle of the screen — so the camera pushes in *towards* the boat, or the face, or the lit ridge, rather than in a direction picked out of a hat. The distance travelled is the same for every photo; only the direction comes from the picture, because a pan whose speed depended on where the subject happened to sit would read as a fault rather than as a composition. A photo with nothing in particular in it, or one whose subject is already dead centre, gets a straight push-in.
+
+**The crop is aimed too**, which matters more than the pan does. A photo that isn't the shape of your display has to lose something, and losing the middle of it is only right by accident — a portrait photo on a wide display is otherwise cropped to a band across its centre whether the subject is in that band or not. So where there is anything to spare, the photo is slid so the subject is in shot. A photo the same shape as the display has nothing to spare and is framed exactly as it always was.
+
+Because a pan needs somewhere to move into, **a panning photo fills the display and ignores the Size setting** above — that setting is about fitting a film to a screen. Switch panning off and photos obey it exactly like videos do, letterboxed or at original size as you've asked. The aimed crop still applies at **Full screen, cropped**, panning or not.
 
 **Reduce Motion** in System Settings → Accessibility switches the movement off too, and photos fall back to the Size setting.
+
+How far a photo zooms over its time on screen isn't in Settings, because the right amount is a matter of taste rather than a decision the app can make for you. The default reads as a camera move rather than as drift; if you want more or less of it:
+
+```
+defaults write cc.jorviksoftware.SaveCannes kenBurnsZoom -float 1.15
+```
+
+1.0 is no movement at all and 1.5 is the most it will accept — past that a photo that only just covers your screen starts to look soft. The pan travels further as the zoom grows, because the two come from the same number.
 
 ### Playback order
 

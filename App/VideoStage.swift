@@ -46,6 +46,9 @@ final class VideoStage: NSView {
     var photoSeconds = 8
     /// Whether a photo slowly pans and zooms while it's up.
     var kenBurnsEnabled = true
+    /// How far a photo is zoomed by the end of its pan, which also sets how far
+    /// the pan can travel — see `photoZoom`.
+    var kenBurnsZoom = VideoStage.defaultKenBurnsZoom
 
     private let player = AVPlayer()
     private let playerLayer = AVPlayerLayer()
@@ -60,6 +63,10 @@ final class VideoStage: NSView {
     /// The photo on screen, for `Screenshot` — and the flag that says a still
     /// is what's showing, since the player is emptied while one is up.
     private(set) var currentStill: (url: URL, image: CGImage)?
+    /// Where the eye goes in the photo on screen, if Vision could say. Both the
+    /// crop and the pan are aimed at it; nil means neither is, which is how
+    /// photos were framed before it was measured.
+    private(set) var currentFocus: PhotoFocus?
     private var notice: NSTextField?
     private let overlay = TitleOverlay(frame: .zero)
     /// What the caption should say for the item playing now, kept so the
@@ -322,14 +329,22 @@ final class VideoStage: NSView {
 
     // MARK: - Stills
 
-    /// How far a photo is zoomed by the end of its pan.
+    /// How far a photo is zoomed by the end of its pan, unless the user says
+    /// otherwise.
     ///
     /// This also sets the pan budget. At 1.08 there is 4% of overscan on each
     /// side, and `panBudgetFraction` spends part of that — so the pan can never
     /// drag an edge of the photo into frame. Every Ken Burns bug is a pan that
     /// outran its zoom, so the two are derived from one number rather than
     /// chosen independently.
-    private static let kenBurnsZoom: CGFloat = 1.08
+    static let defaultKenBurnsZoom: CGFloat = 1.08
+    /// What a stored zoom is allowed to be.
+    ///
+    /// Below 1 there is no overscan to pan into and the photo would come away
+    /// from the edges of the display; the top of the range is where the decode
+    /// starts costing more than twice the pixels the display can show, and where
+    /// a photo that only just covered the screen begins to look soft.
+    static let kenBurnsZoomRange: ClosedRange<CGFloat> = 1...1.5
     /// How much of the available overscan a pan may spend. Short of all of it so
     /// rounding can't put an edge exactly on the boundary.
     private static let panBudgetFraction: CGFloat = 0.75
@@ -349,6 +364,14 @@ final class VideoStage: NSView {
         kenBurnsEnabled && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
+    /// The zoom actually used, clamped once here so every reader of it — the
+    /// decode size and the animation both — is working from a value that can't
+    /// pull the photo away from the edges of the display.
+    private var photoZoom: CGFloat {
+        min(max(kenBurnsZoom, Self.kenBurnsZoomRange.lowerBound),
+            Self.kenBurnsZoomRange.upperBound)
+    }
+
     /// Put one photo on screen, or skip to the next candidate.
     @MainActor
     private func presentStill(_ url: URL) async {
@@ -356,8 +379,8 @@ final class VideoStage: NSView {
         // Decode no larger than this display can use, zoom included. A 60
         // megapixel photo at full size costs hundreds of megabytes per display
         // and buys nothing — the screen cannot show it.
-        let target = CGSize(width: bounds.width * scale * Self.kenBurnsZoom,
-                            height: bounds.height * scale * Self.kenBurnsZoom)
+        let target = CGSize(width: bounds.width * scale * photoZoom,
+                            height: bounds.height * scale * photoZoom)
         let decoded = await Task.detached(priority: .userInitiated) {
             Self.decode(url, covering: target)
         }.value
@@ -375,6 +398,7 @@ final class VideoStage: NSView {
         player.replaceCurrentItem(with: nil)
         playerLayer.isHidden = true
         currentStill = (url, decoded.image)
+        currentFocus = decoded.focus
         currentPixelSize = CGSize(width: decoded.image.width, height: decoded.image.height)
         stillLayer.isHidden = false
         // No implicit animation on the swap. CALayer cross-fades a `contents`
@@ -390,7 +414,10 @@ final class VideoStage: NSView {
         // proves for a video.
         failuresSinceLastSuccess = 0
         scLog("showing \(url.lastPathComponent) (\(decoded.image.width)×\(decoded.image.height)) for \(photoSeconds)s"
-              + (panningPhotos ? ", panning" : ""))
+              + (panningPhotos ? ", panning" : "")
+              + (decoded.focus.map {
+                  String(format: ", focus %.2f,%.2f", $0.point.x, $0.point.y)
+              } ?? ", no focus found"))
         currentCaption = (decoded.title, decoded.copyright)
         showCaption()
         startTitleTimer()
@@ -420,6 +447,7 @@ final class VideoStage: NSView {
         stillLayer.contents = nil
         stillLayer.isHidden = true
         currentStill = nil
+        currentFocus = nil
         playerLayer.isHidden = false
     }
 
@@ -435,17 +463,19 @@ final class VideoStage: NSView {
         stillLayer.transform = CATransform3DIdentity
         guard panningPhotos else { return }
 
-        let zoom = Self.kenBurnsZoom
-        // Half the overscan the zoom creates is the most a pan can spend before
-        // an edge shows; take a fraction of that.
-        let budget = (zoom - 1) / 2 * Self.panBudgetFraction
-        // A random direction each time, so the same photo coming round again
-        // doesn't move identically, and half of them zoom out rather than in.
-        let angle = CGFloat.random(in: 0..<(2 * .pi))
+        let zoom = photoZoom
+        // Where the zoomed end of the move sits: aimed at what Vision found, or
+        // in a random direction when it found nothing — which also keeps the
+        // same photo coming round again from moving identically every time.
+        let offset = PhotoFraming.panTranslation(
+            layerFrame: stillLayer.frame, in: bounds, zoom: zoom,
+            budgetFraction: Self.panBudgetFraction, focus: currentFocus,
+            fallbackAngle: .random(in: 0..<(2 * .pi)))
         let zoomed = CATransform3DConcat(
             CATransform3DMakeScale(zoom, zoom, 1),
-            CATransform3DMakeTranslation(cos(angle) * budget * bounds.width,
-                                         sin(angle) * budget * bounds.height, 0))
+            CATransform3DMakeTranslation(offset.x, offset.y, 0))
+        // Half of them zoom out rather than in, so a run of photos doesn't feel
+        // like one repeated camera move.
         let inward = Bool.random()
 
         let move = CABasicAnimation(keyPath: "transform")
@@ -471,6 +501,8 @@ final class VideoStage: NSView {
         let image: CGImage
         let title: String
         let copyright: String?
+        /// Where the eye goes, or nil if Vision had no answer.
+        let focus: PhotoFocus?
     }
 
     /// Read one photo at no more resolution than `covering` needs, with its EXIF
@@ -493,9 +525,16 @@ final class VideoStage: NSView {
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         else { return nil }
         let filename = url.deletingPathExtension().lastPathComponent
+        // Measured here, on the decode's own thread, because Vision takes tens
+        // of milliseconds and this is the one place in a photo's life that is
+        // already off the main thread. A photo shown on two displays is measured
+        // twice, for the same reason it is decoded twice: each display's stage
+        // is independent, and a shared cache would be the only thing in the
+        // stage that wasn't.
         return DecodedStill(image: image,
                             title: embeddedTitle(properties) ?? filename,
-                            copyright: embeddedCopyright(properties))
+                            copyright: embeddedCopyright(properties),
+                            focus: PhotoFocus.detect(in: image))
     }
 
     /// The largest edge worth decoding.
@@ -808,16 +847,14 @@ final class VideoStage: NSView {
     /// Size setting says — see `panningPhotos` — because a pan has to have
     /// overscan to move into. Otherwise a photo is fitted exactly like a film.
     private func layoutStillLayer() {
-        guard currentStill != nil else { return }
+        guard let still = currentStill else { return }
         guard !panningPhotos else {
-            stillLayer.contentsGravity = .resizeAspectFill
-            stillLayer.frame = bounds
+            fillWithPhoto(still.image)
             return
         }
         switch scaling {
         case .fullScreen:
-            stillLayer.contentsGravity = .resizeAspectFill
-            stillLayer.frame = bounds
+            fillWithPhoto(still.image)
         case .fitToScreen:
             stillLayer.contentsGravity = .resizeAspect
             stillLayer.frame = bounds
@@ -825,6 +862,26 @@ final class VideoStage: NSView {
             stillLayer.contentsGravity = .resizeAspect
             stillLayer.frame = originalSizeFrame()
         }
+    }
+
+    /// Fill the display with the photo, aimed at its focus point.
+    ///
+    /// The layer is given the whole photo at covering scale rather than being
+    /// pinned to `bounds` with aspect-fill doing the cropping: the crop is then
+    /// this code's decision rather than a side effect of where the middle of the
+    /// photo happens to be, which is what lets it be aimed. The overhang is
+    /// clipped by the view — see `masksToBounds` in `init`.
+    ///
+    /// `resizeAspectFill` rather than `resizeAspect` inside that frame even
+    /// though the frame is built from the photo's own aspect ratio: the two are
+    /// identical to within rounding, and this is the one of them that answers a
+    /// half-pixel disagreement by overfilling instead of by showing a hairline
+    /// of black.
+    private func fillWithPhoto(_ image: CGImage) {
+        stillLayer.contentsGravity = .resizeAspectFill
+        stillLayer.frame = PhotoFraming.fillFrame(
+            imageSize: CGSize(width: image.width, height: image.height),
+            in: bounds, focus: currentFocus)
     }
 
     /// One video pixel per screen pixel, centred on black.
