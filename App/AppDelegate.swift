@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
+        installEditMenu()
         scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s")
         registerAtLoginIfNeeded()
         // Touch the lazy property so the updater starts and begins its
@@ -114,6 +115,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleScreenChange()
         }
         observeWakeAndUnlock()
+    }
+
+    /// An `LSUIElement` app is given **no main menu**, and the standard editing
+    /// commands are dispatched through one: `NSMenu` matches the key equivalent
+    /// and sends `paste:` down the responder chain. With no menu there is nothing
+    /// to match, so ⌘V in any window the app opens does nothing at all — which is
+    /// how the stream field in Settings ended up refusing a pasted URL, the one
+    /// field in the app where typing by hand is genuinely unreasonable.
+    ///
+    /// The menu is never seen: an accessory app shows no menu bar. It exists
+    /// purely so the key equivalents resolve. Same fix, and the same reason, as
+    /// Lookout's setup sheet.
+    private func installEditMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: L10n.format("menu.quit_format", defaultValue: "Quit %@", "Save Cannes"),
+                                   action: #selector(NSApplication.terminate(_:)),
+                                   keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: L10n.string("menu.edit", defaultValue: "Edit"))
+        // Undo/Redo by string selector: NSText declares neither, and the
+        // responder that implements them (the field editor) is found at runtime.
+        editMenu.addItem(NSMenuItem(title: L10n.string("menu.undo", defaultValue: "Undo"),
+                                    action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: L10n.string("menu.redo", defaultValue: "Redo"),
+                                    action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: L10n.string("menu.cut", defaultValue: "Cut"),
+                                    action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: L10n.string("menu.copy", defaultValue: "Copy"),
+                                    action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: L10n.string("menu.paste", defaultValue: "Paste"),
+                                    action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: L10n.string("menu.select_all", defaultValue: "Select All"),
+                                    action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        NSApp.mainMenu = main
     }
 
     /// Relaunching from /Applications is the user's only way back to a hidden
