@@ -24,7 +24,7 @@ brew install --cask perpetualbeta/jorvik/savecannes
 
 Either way, the first launch happens immediately. Save Cannes registers itself for launch at user login on first run; toggle that off in Settings → General if you'd rather start it manually.
 
-After first launch you'll see a small **film-strip** icon in your menu bar. That's your only touchpoint with the app — everything else lives in its menu and its **Settings…** window. Open Settings and choose a video source before anything will play.
+After first launch you'll see a small **film-strip** icon in your menu bar. That's your only touchpoint with the app — everything else lives in its menu and its **Settings…** window. Open Settings and add a source — a folder, a file or a stream — before anything will play.
 
 To uninstall: `pkill -f "Save Cannes"` then drag `Save Cannes.app` to the Trash.
 
