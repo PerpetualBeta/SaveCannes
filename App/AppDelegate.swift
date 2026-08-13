@@ -59,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "differentVideoPerDisplay":  true,
         "titleMode":                 TitleMode.atStart.rawValue,
         "titleRepeatMinutes":        5,
+        "photosEnabled":             true,
+        "photoSeconds":              8,
+        "kenBurnsEnabled":           true,
     ]
 
     private var idleThresholdSeconds: Double {

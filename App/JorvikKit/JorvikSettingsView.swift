@@ -120,9 +120,15 @@ struct JorvikSettingsView<AppSettings: View>: View {
         window.styleMask = style
         window.isReleasedWhenClosed = false
         window.setContentSize(size)
+        // The cause, rather than the symptom: left to itself AppKit hands
+        // first-responder status to the first text field in the form. The scroll
+        // correction below stays as the safety net, since SwiftUI's own focus
+        // machinery can still claim it after this point.
+        window.initialFirstResponder = nil
         JorvikWindowHelper.centreOnActiveDisplay(window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        scrollToTop(controller.view, in: window)
         JorvikSettingsWindowCache.existingWindow = window
     }
 }
@@ -132,6 +138,56 @@ struct JorvikSettingsView<AppSettings: View>: View {
 /// static stored properties inside generic types — so the cache sits here.
 private enum JorvikSettingsWindowCache {
     static var existingWindow: NSWindow?
+}
+
+private extension JorvikSettingsView {
+
+    /// Open at the top of the form.
+    ///
+    /// AppKit hands first-responder status to the first text field when the
+    /// window is shown, then scrolls the form to reveal it — so a settings form
+    /// with a text field part-way down opens *scrolled to that field*, past the
+    /// sections above it. Harmless on a form that fits; very visible on one long
+    /// enough to scroll, which is now any form taller than 80% of the display.
+    ///
+    /// Applied across a short settle window rather than once, because the scroll
+    /// being undone here doesn't happen at one predictable moment: focus is
+    /// assigned partly when the window is shown and partly when it becomes key,
+    /// and `NSApp.activate` makes the second of those asynchronous. Doing it on a
+    /// single run-loop turn left the form scrolled about one launch in three.
+    ///
+    /// Safe to repeat: the whole window is well under the time it takes anyone to
+    /// reach the scroll wheel, so this can't fight a scroll the user meant.
+    static func scrollToTop(_ root: NSView, in window: NSWindow) {
+        for delay in JorvikSettingsMetrics.scrollSettleDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { apply(root, in: window) }
+        }
+    }
+
+    private static func apply(_ root: NSView, in window: NSWindow) {
+        do {
+            // Nothing focused, so nothing to scroll back to. A field still takes
+            // focus on click; it just doesn't claim it uninvited.
+            window.makeFirstResponder(nil)
+            guard let scroller = firstScrollView(in: root),
+                  let document = scroller.documentView else { return }
+            // A flipped document has its origin at the top; an unflipped one has
+            // the top at its full height less what's on screen.
+            let top = document.isFlipped
+                ? NSPoint.zero
+                : NSPoint(x: 0, y: max(0, document.bounds.height - scroller.contentSize.height))
+            scroller.contentView.scroll(to: top)
+            scroller.reflectScrolledClipView(scroller.contentView)
+        }
+    }
+
+    static func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scroller = view as? NSScrollView { return scroller }
+        for subview in view.subviews {
+            if let found = firstScrollView(in: subview) { return found }
+        }
+        return nil
+    }
 }
 
 /// Sizing metrics for the settings window. A separate enum for the same reason
@@ -151,4 +207,9 @@ private enum JorvikSettingsMetrics {
     /// Fallback when there is no screen to measure — vanishingly unlikely, and a
     /// plausible small display beats a zero-size window.
     static let assumedScreenSize = NSSize(width: 1200, height: 900)
+
+    /// When to re-assert the form's scroll position after the window is shown.
+    /// See `JorvikSettingsView.scrollToTop` for why this is a window and not a
+    /// single moment.
+    static let scrollSettleDelays: [Double] = [0, 0.05, 0.25]
 }

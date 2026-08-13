@@ -1,6 +1,6 @@
 # Save Cannes
 
-Plays your own videos as a macOS screensaver. Point it at films, folders of them, or a live stream, and it takes over every display when your Mac goes quiet.
+Plays your own videos and photos as a macOS screensaver. Point it at films, folders of them, a folder of photographs, or a live stream, and it takes over every display when your Mac goes quiet.
 
 A tribute to [Save Hollywood](http://s.sudre.free.fr/Software/SaveHollywood/about.html) by WhiteBox — the much-loved saver that did exactly this, until macOS broke it. Same idea, rebuilt from scratch on the modern Jorvik screensaver pattern.
 
@@ -45,6 +45,7 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 - **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
+- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. Each is held for a few seconds and slowly panned and zoomed. See **Photos** below.
 - **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
 - **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
 - **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
@@ -54,9 +55,10 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 Click the menu bar icon → **Settings…** for:
 
 - **Permissions** — accessibility status (required only if you enable Lock Screen on dismiss)
-- **Sources** — the folders, files and streams to play, each with an include-in-playback switch and a count of what was found
+- **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
 - **Playback** — order, and sound
 - **Display** — how each video is fitted to the screen, and whether every display shows the same one
+- **Photos** — whether photos play, how long each is held, and whether they pan and zoom
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, and a global "Play now" hotkey
 - **On dismiss** — toggle to lock the screen automatically when the saver dismisses
@@ -71,8 +73,10 @@ All settings persist immediately, no Save/OK button. Changes apply the next time
 Add as many as you like, of three kinds:
 
 - **Folders** are walked recursively, so subfolders are included and a library organised one-folder-per-film needs no flattening. Hidden files are skipped, and bundles (a `.photoslibrary`, an `.app`) aren't opened up.
-- **Files** are single videos, played on loop when they're the only source.
+- **Files** are single videos or photos, played on loop when they're the only source.
 - **Streams** are URLs handed straight to the player. That means they have to be something it can open by itself — an **HLS `.m3u8`** or a **direct MP4** — not a web page it would have to scrape, which rules out YouTube and the like by design rather than by omission. Only `http` and `https` are accepted, because those are the schemes that actually play; offering others would mean offering something that silently never works.
+
+Each source on disk has a **magnifying-glass button** that shows it in Finder — a folder opens so you can see what's in it, a single file is revealed in its enclosing folder. Worth a click before you walk away, to be sure the saver is pointed where you think it is.
 
 #### Streams known to work
 
@@ -104,10 +108,27 @@ Removing a source is the minus button beside it. Nothing is ever moved or altere
 
 > **A note on protected folders.** If a folder lives in Desktop, Documents or Downloads, macOS asks permission the first time. Save Cannes triggers that prompt as you add it, while you're looking at Settings, rather than later from behind a fullscreen saver where you couldn't see it.
 
+### Photos
+
+Photos in a source folder join the playlist alongside the videos, in the same order, and each is held for a few seconds before the next thing plays.
+
+- **Any image type macOS recognises** counts — JPEG, PNG, HEIC, TIFF, camera RAW. Rather than a list of extensions, the file's actual type is asked of the system, so a format added to macOS in future works without a change here. PDFs and SVGs aren't images by that test, and aren't played.
+- **Orientation is honoured.** A phone photo with an EXIF rotation tag is shown upright rather than on its side.
+- **The photo's own title** is used for the on-screen caption when its IPTC or TIFF fields carry one, and its copyright line likewise. Otherwise the filename, exactly as for a video.
+- **Turn photos off** if your film folders have cover art or downloaded posters in them that you'd rather not see as slides. A file you picked by hand is always played whichever kind it is — you chose that exact file.
+
+#### Pan and zoom (Ken Burns)
+
+On by default: each photo drifts slowly across the screen, zooming in or out, a different direction each time. The pan is derived from the zoom rather than set separately, so it can never move far enough to drag an edge of the photo into frame.
+
+Because a pan needs somewhere to move into, **a panning photo fills the display and ignores the Size setting** above — that setting is about fitting a film to a screen. Switch panning off and photos obey it exactly like videos do, letterboxed or at original size as you've asked.
+
+**Reduce Motion** in System Settings → Accessibility switches the movement off too, and photos fall back to the Size setting.
+
 ### Playback order
 
 - **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice.
-- **Sequential** — each source in turn, in the order they're listed, and each source's videos in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
+- **Sequential** — each source in turn, in the order they're listed, and each source's files in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
 
 ### Size on screen
 
@@ -164,6 +185,8 @@ Set a hotkey under Settings → Capture and press it while the saver is playing.
 The frame is pulled from the video file rather than grabbed off the screen, so you get the whole frame at the video's own resolution — a screenshot taken in "full screen" mode isn't cropped to the shape of whichever display it happened to be playing on.
 
 That also means a **live stream can't be captured**: there's no file to seek into. On-demand streams are fine.
+
+A **photo** is re-read from its own file at full size, so what lands in `~/Pictures/Save Cannes/` is the whole photograph rather than the display-sized, cropped, part-way-through-a-zoom version that was on screen.
 
 ## Auto-update
 

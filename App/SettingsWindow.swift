@@ -26,6 +26,9 @@ struct SaveCannesSettingsContent: View {
     @AppStorage("videoScaling")   private var scaling: VideoScaling = .fullScreen
     @AppStorage("soundEnabled")   private var soundEnabled: Bool = false
     @AppStorage("differentVideoPerDisplay") private var differentVideoPerDisplay: Bool = true
+    @AppStorage("photosEnabled")   private var photosEnabled: Bool = true
+    @AppStorage("photoSeconds")    private var photoSeconds: Int = 8
+    @AppStorage("kenBurnsEnabled") private var kenBurnsEnabled: Bool = true
     @AppStorage("titleMode")          private var titleMode: TitleMode = .atStart
     @AppStorage("titleRepeatMinutes") private var titleRepeatMinutes: Int = 5
     @AppStorage("idleMinutes")    private var idleMinutes: Int = 5
@@ -35,9 +38,10 @@ struct SaveCannesSettingsContent: View {
     /// toggles without a round-trip through UserDefaults on every keystroke.
     /// Written back through `commit` on every change.
     @State private var sources: [VideoSource] = SourceStore.load()
-    /// Videos found per source, keyed by id. Absent while a count is in flight —
-    /// a folder of thousands takes a moment and mustn't block the window.
-    @State private var counts: [UUID: Int] = [:]
+    /// What was found per source, keyed by id. Absent while a count is in
+    /// flight — a folder of thousands takes a moment and mustn't block the
+    /// window.
+    @State private var counts: [UUID: VideoLibrary.Tally] = [:]
     /// The stream field's contents, and whether what's in it can be played.
     @State private var newURL: String = ""
 
@@ -75,7 +79,7 @@ struct SaveCannesSettingsContent: View {
         Section(L10n.string("settings.sources", defaultValue: "Sources")) {
             if sources.isEmpty {
                 Text(L10n.string("settings.no_sources",
-                                 defaultValue: "Nothing to play yet. Add a folder, a file, or the URL of a stream."))
+                                 defaultValue: "Nothing to play yet. Add a folder of videos or photos, a single file, or the URL of a stream."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -115,6 +119,23 @@ struct SaveCannesSettingsContent: View {
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 8)
+                    // Only for things on disk. A stream has nothing to reveal,
+                    // and an enabled-looking button that did nothing would be
+                    // worse than its absence.
+                    if source.kind != .stream {
+                        Button {
+                            reveal(source)
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help(source.kind == .folder
+                              ? L10n.string("settings.reveal_folder",
+                                            defaultValue: "Open this folder in Finder")
+                              : L10n.string("settings.reveal_file",
+                                            defaultValue: "Show this file in Finder"))
+                    }
                     Button {
                         remove(source)
                     } label: {
@@ -173,7 +194,7 @@ struct SaveCannesSettingsContent: View {
                     .tag(PlaybackOrder.sequential)
             }
             Text(L10n.string("settings.order_note",
-                             defaultValue: "Sequential plays each source in turn, in the order listed above, and each source's videos in path order — so a folder of folders stays together. Random shuffles everything from every switched-on source."))
+                             defaultValue: "Sequential plays each source in turn, in the order listed above, and each source's files in path order — so a folder of folders stays together. Random shuffles everything from every switched-on source."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -207,6 +228,34 @@ struct SaveCannesSettingsContent: View {
                 .foregroundStyle(.secondary)
         }
 
+        Section(L10n.string("settings.photos", defaultValue: "Photos")) {
+            Toggle(L10n.string("settings.photos_enabled",
+                               defaultValue: "Play photos as well as videos"),
+                   isOn: $photosEnabled)
+            Text(L10n.string("settings.photos_note",
+                             defaultValue: "Any image a folder holds — JPEG, PNG, HEIC, TIFF, camera RAW — joins the playlist alongside the videos. Turn this off if your video folders have cover art or posters in them that you would rather not see. A file you pick by hand is always played, whichever kind it is."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Text(L10n.string("settings.photo_seconds", defaultValue: "Hold each photo for:"))
+                TextField("", value: $photoSeconds, formatter: Self.minutes(min: 2, max: 600))
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                Text(L10n.string("settings.seconds", defaultValue: "seconds"))
+                Spacer()
+            }
+            .disabled(!photosEnabled)
+
+            Toggle(L10n.string("settings.ken_burns", defaultValue: "Pan and zoom (Ken Burns)"),
+                   isOn: $kenBurnsEnabled)
+                .disabled(!photosEnabled)
+            Text(L10n.string("settings.ken_burns_note",
+                             defaultValue: "A slow drift across each photo. Because a pan needs room to move into, a panning photo fills the display and ignores the Size setting above — switch this off to show photos at that size instead. Reduce Motion in System Settings turns the movement off too."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
         Section(L10n.string("settings.titles", defaultValue: "Titles")) {
             Picker(L10n.string("settings.show_title", defaultValue: "Show title:"), selection: $titleMode) {
                 Text(L10n.string("settings.title_never", defaultValue: "Never"))
@@ -226,7 +275,7 @@ struct SaveCannesSettingsContent: View {
             }
             .disabled(titleMode != .repeatedly)
             Text(L10n.string("settings.title_note",
-                             defaultValue: "The video's own title if it has one, otherwise its filename, low in the corner for a few seconds. A copyright line is shown underneath when the file carries one."))
+                             defaultValue: "The file's own title if it has one, otherwise its filename, low in the corner for a few seconds. A copyright line is shown underneath when the file carries one — a photo's IPTC or TIFF fields count."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -253,7 +302,7 @@ struct SaveCannesSettingsContent: View {
             ShortcutRow(label: L10n.string("settings.screenshot", defaultValue: "Screenshot:"),
                         slot: .screenshot)
             Text(L10n.string("settings.screenshot_note",
-                             defaultValue: "Saves the current frame, at the video's own resolution, to ~/Pictures/Save Cannes/"))
+                             defaultValue: "Saves what is on screen to ~/Pictures/Save Cannes/ — a video frame at the video's own resolution, or the photo at its full size."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -289,13 +338,47 @@ struct SaveCannesSettingsContent: View {
     /// playback, or where it lives when there is nothing to count.
     private func countLine(_ source: VideoSource) -> String {
         if source.kind == .stream { return source.subtitle }
-        guard let count = counts[source.id] else {
+        guard let tally = counts[source.id] else {
             return L10n.string("settings.counting", defaultValue: "Counting…")
         }
+        // Spelled out per kind rather than as one total: "147 items" hides the
+        // thing the user most wants to know from this line, which is whether the
+        // folder they just added holds what they thought it held.
+        let parts = [phrase(tally.videos,
+                            one: L10n.string("settings.count_one_video", defaultValue: "1 video"),
+                            many: L10n.string("settings.count_videos", defaultValue: "%d videos")),
+                     phrase(tally.photos,
+                            one: L10n.string("settings.count_one_photo", defaultValue: "1 photo"),
+                            many: L10n.string("settings.count_photos", defaultValue: "%d photos"))]
+            .compactMap { $0 }
+        guard !parts.isEmpty else {
+            return L10n.string("settings.count_none", defaultValue: "Nothing playable found here")
+        }
+        return parts.joined(separator: L10n.string("settings.count_join", defaultValue: ", "))
+    }
+
+    private func phrase(_ count: Int, one: String, many: String) -> String? {
         switch count {
-        case 0:  return L10n.string("settings.count_none", defaultValue: "No videos found here")
-        case 1:  return L10n.string("settings.count_one", defaultValue: "1 video")
-        default: return L10n.format("settings.count_many", defaultValue: "%d videos", count)
+        case 0:  return nil
+        case 1:  return one
+        default: return String(format: many, count)
+        }
+    }
+
+    /// Show a source in Finder so the user can see for themselves that it's the
+    /// folder they meant.
+    ///
+    /// A folder is *opened* rather than selected in its parent — the question
+    /// being answered is "is this the right folder", which is a question about
+    /// what's inside it. A single file is selected in its parent instead, since
+    /// opening it would launch a player over the top of Settings.
+    private func reveal(_ source: VideoSource) {
+        guard let url = source.url else { return }
+        scLog("revealing \(url.path)")
+        switch source.kind {
+        case .folder: NSWorkspace.shared.open(url)
+        case .file:   NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .stream: break
         }
     }
 
@@ -313,10 +396,10 @@ struct SaveCannesSettingsContent: View {
         // Several at once: adding six folders one dialogue at a time is a chore
         // nobody should be put through.
         panel.allowsMultipleSelection = true
-        if !folders { panel.allowedContentTypes = [.movie] }
+        if !folders { panel.allowedContentTypes = [.movie, .image] }
         panel.message = folders
-            ? L10n.string("settings.panel_folders", defaultValue: "Choose folders of video files")
-            : L10n.string("settings.panel_files", defaultValue: "Choose video files")
+            ? L10n.string("settings.panel_folders", defaultValue: "Choose folders of videos or photos")
+            : L10n.string("settings.panel_files", defaultValue: "Choose videos or photos")
         panel.prompt = L10n.string("settings.panel_prompt", defaultValue: "Add")
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
@@ -366,9 +449,9 @@ struct SaveCannesSettingsContent: View {
         let snapshot = sources
         counts = counts.filter { id, _ in snapshot.contains { $0.id == id } }
         Task.detached {
-            var tally: [UUID: Int] = [:]
+            var tally: [UUID: VideoLibrary.Tally] = [:]
             for source in snapshot where source.kind != .stream {
-                tally[source.id] = VideoLibrary.videos(in: source).count
+                tally[source.id] = VideoLibrary.tally(in: source)
             }
             // Handed over as a `let`: a captured `var` crossing into the main
             // actor is a warning today and an error in Swift 6.

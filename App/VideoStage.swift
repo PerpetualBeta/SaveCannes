@@ -39,8 +39,27 @@ final class VideoStage: NSView {
     /// Gap between repeats in `.repeatedly` mode.
     var titleRepeatMinutes = 5
 
+    /// How long each photo is held. A still has no duration of its own, so
+    /// unlike a video the length has to come from somewhere — this is the only
+    /// honest place for it to come from, which is why it's a setting rather than
+    /// a constant picked in here.
+    var photoSeconds = 8
+    /// Whether a photo slowly pans and zooms while it's up.
+    var kenBurnsEnabled = true
+
     private let player = AVPlayer()
     private let playerLayer = AVPlayerLayer()
+    /// Where photos are drawn. A separate layer from the player's, rather than
+    /// reusing one surface, because the two are handed their content in
+    /// completely different ways and swapping between them is then just a
+    /// matter of which one is hidden.
+    private let stillLayer = CALayer()
+    /// Advances off a photo. The video path is driven by the player reaching the
+    /// end of its item; a still would sit there forever, so it gets a clock.
+    private var stillTimer: Timer?
+    /// The photo on screen, for `Screenshot` — and the flag that says a still
+    /// is what's showing, since the player is emptied while one is up.
+    private(set) var currentStill: (url: URL, image: CGImage)?
     private var notice: NSTextField?
     private let overlay = TitleOverlay(frame: .zero)
     /// What the caption should say for the item playing now, kept so the
@@ -80,9 +99,19 @@ final class VideoStage: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
+        // A photo zoomed past 1.0 is a layer larger than this view; without this
+        // it would paint over the neighbouring display's window edge.
+        layer?.masksToBounds = true
         playerLayer.player = player
         playerLayer.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(playerLayer)
+        stillLayer.backgroundColor = NSColor.black.cgColor
+        // Nearest-neighbour on a photo being slowly zoomed would crawl; the
+        // filters cost nothing on one static image per several seconds.
+        stillLayer.minificationFilter = .trilinear
+        stillLayer.magnificationFilter = .trilinear
+        stillLayer.isHidden = true
+        layer?.addSublayer(stillLayer)
         // Sized here, and again in `layout()`. An autoresizing mask alone
         // isn't enough: it only fires when the superview *changes* size, and
         // this view is created at its final size, so a subview added at
@@ -103,8 +132,12 @@ final class VideoStage: NSView {
     /// means the caption renders *under* the picture, i.e. invisibly. Pinning
     /// the video at index 0 settles it.
     private func keepVideoBehind() {
-        guard let layer = layer, playerLayer.superlayer === layer else { return }
-        layer.insertSublayer(playerLayer, at: 0)
+        guard let layer = layer else { return }
+        if playerLayer.superlayer === layer { layer.insertSublayer(playerLayer, at: 0) }
+        // Above the video, still behind the caption: the two picture layers are
+        // never visible at once, so their order relative to each other is only
+        // about keeping both of them under the text.
+        if stillLayer.superlayer === layer { layer.insertSublayer(stillLayer, at: 1) }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -113,6 +146,7 @@ final class VideoStage: NSView {
         detachItem()
         titleTimer?.invalidate()
         watchdog?.invalidate()
+        stillTimer?.invalidate()
     }
 
     // MARK: - Lifecycle
@@ -131,6 +165,9 @@ final class VideoStage: NSView {
     /// down on unlock.
     func pause() {
         player.pause()
+        // A photo's clock has to stop too, or the lock screen spends its time
+        // silently walking the playlist and we come back somewhere else.
+        stopStillTimer()
         stopTitleTimer()
         // A paused playhead is motionless by definition; leaving the watchdog
         // armed here would have it "rescue" us from our own lock screen.
@@ -151,6 +188,8 @@ final class VideoStage: NSView {
         player.replaceCurrentItem(with: nil)
         queue.removeAll()
         currentPixelSize = nil
+        stopStillTimer()
+        clearStill()
     }
 
     /// The asset and playhead position for `Screenshot`, or nil when nothing
@@ -196,7 +235,13 @@ final class VideoStage: NSView {
             return
         }
         let url = queue.removeFirst()
-        Task { await present(url) }
+        // Decided per item rather than per source: one folder can hold both,
+        // which is the whole point of playing photos at all.
+        if VideoLibrary.isImage(url) {
+            Task { await presentStill(url) }
+        } else {
+            Task { await present(url) }
+        }
     }
 
     /// Load one candidate and put it on screen, or skip to the next.
@@ -233,6 +278,7 @@ final class VideoStage: NSView {
         guard running else { return }
 
         hideNotice()
+        clearStill()
         currentPixelSize = size
         // Stated duration, for the watchdog. `.indefinite` (a stream) and a
         // missing value both leave it nil, which turns off the reached-the-end
@@ -272,6 +318,225 @@ final class VideoStage: NSView {
         let (natural, transform) = try await track.load(.naturalSize, .preferredTransform)
         let oriented = natural.applying(transform)
         return CGSize(width: abs(oriented.width), height: abs(oriented.height))
+    }
+
+    // MARK: - Stills
+
+    /// How far a photo is zoomed by the end of its pan.
+    ///
+    /// This also sets the pan budget. At 1.08 there is 4% of overscan on each
+    /// side, and `panBudgetFraction` spends part of that — so the pan can never
+    /// drag an edge of the photo into frame. Every Ken Burns bug is a pan that
+    /// outran its zoom, so the two are derived from one number rather than
+    /// chosen independently.
+    private static let kenBurnsZoom: CGFloat = 1.08
+    /// How much of the available overscan a pan may spend. Short of all of it so
+    /// rounding can't put an edge exactly on the boundary.
+    private static let panBudgetFraction: CGFloat = 0.75
+    /// Bounds for a stored photo duration, in seconds. Same instinct as the
+    /// clamp on `titleRepeatMinutes`: a value that arrived from disk shouldn't
+    /// be able to freeze the playlist on one image or flicker through it.
+    private static let photoSecondsRange: ClosedRange<Double> = 2...600
+
+    /// Whether photos are being panned right now.
+    ///
+    /// Not simply the setting: Reduce Motion turns the movement off, and the
+    /// answer decides how a photo is *laid out* as well as whether it animates.
+    /// A panning photo fills the display, because a pan needs overscan to move
+    /// into — so with the effect on, photos ignore the Size setting above, which
+    /// is about fitting a film to the screen. With it off they obey it.
+    private var panningPhotos: Bool {
+        kenBurnsEnabled && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// Put one photo on screen, or skip to the next candidate.
+    @MainActor
+    private func presentStill(_ url: URL) async {
+        let scale = window?.backingScaleFactor ?? window?.screen?.backingScaleFactor ?? 1
+        // Decode no larger than this display can use, zoom included. A 60
+        // megapixel photo at full size costs hundreds of megabytes per display
+        // and buys nothing — the screen cannot show it.
+        let target = CGSize(width: bounds.width * scale * Self.kenBurnsZoom,
+                            height: bounds.height * scale * Self.kenBurnsZoom)
+        let decoded = await Task.detached(priority: .userInitiated) {
+            Self.decode(url, covering: target)
+        }.value
+        // The saver may have been dismissed while the photo was being read.
+        guard running else { return }
+        guard let decoded = decoded else {
+            skip(url, because: "could not be decoded")
+            return
+        }
+
+        hideNotice()
+        // A still and a film are never up at once, and the player is emptied
+        // rather than paused so a photo interlude doesn't hold a decoder open.
+        detachItem()
+        player.replaceCurrentItem(with: nil)
+        playerLayer.isHidden = true
+        currentStill = (url, decoded.image)
+        currentPixelSize = CGSize(width: decoded.image.width, height: decoded.image.height)
+        stillLayer.isHidden = false
+        // No implicit animation on the swap. CALayer cross-fades a `contents`
+        // change by default, and a fade fighting the Ken Burns transform of the
+        // photo underneath reads as a glitch rather than a transition.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        stillLayer.contents = decoded.image
+        layoutStillLayer()
+        CATransaction.commit()
+        startKenBurns()
+        // It decoded, so the source is alive — the same thing `readyToPlay`
+        // proves for a video.
+        failuresSinceLastSuccess = 0
+        scLog("showing \(url.lastPathComponent) (\(decoded.image.width)×\(decoded.image.height)) for \(photoSeconds)s"
+              + (panningPhotos ? ", panning" : ""))
+        currentCaption = (decoded.title, decoded.copyright)
+        showCaption()
+        startTitleTimer()
+        startStillTimer()
+    }
+
+    /// A photo has no end of its own to play to, so it gets a clock. One-shot,
+    /// re-armed by the next photo.
+    private func startStillTimer() {
+        stopStillTimer()
+        let seconds = min(max(Double(photoSeconds), Self.photoSecondsRange.lowerBound),
+                          Self.photoSecondsRange.upperBound)
+        stillTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.playNext()
+        }
+    }
+
+    private func stopStillTimer() {
+        stillTimer?.invalidate()
+        stillTimer = nil
+    }
+
+    /// Hand the display back to the player.
+    private func clearStill() {
+        stillLayer.removeAnimation(forKey: Self.kenBurnsKey)
+        stillLayer.transform = CATransform3DIdentity
+        stillLayer.contents = nil
+        stillLayer.isHidden = true
+        currentStill = nil
+        playerLayer.isHidden = false
+    }
+
+    private static let kenBurnsKey = "kenBurns"
+
+    /// The slow pan and zoom, for as long as the photo is up.
+    ///
+    /// Held at its end state (`fillMode`, `isRemovedOnCompletion`) rather than
+    /// snapping back: the photo is still on screen when the animation ends if
+    /// the duration and the timer ever disagree by a frame.
+    private func startKenBurns() {
+        stillLayer.removeAnimation(forKey: Self.kenBurnsKey)
+        stillLayer.transform = CATransform3DIdentity
+        guard panningPhotos else { return }
+
+        let zoom = Self.kenBurnsZoom
+        // Half the overscan the zoom creates is the most a pan can spend before
+        // an edge shows; take a fraction of that.
+        let budget = (zoom - 1) / 2 * Self.panBudgetFraction
+        // A random direction each time, so the same photo coming round again
+        // doesn't move identically, and half of them zoom out rather than in.
+        let angle = CGFloat.random(in: 0..<(2 * .pi))
+        let zoomed = CATransform3DConcat(
+            CATransform3DMakeScale(zoom, zoom, 1),
+            CATransform3DMakeTranslation(cos(angle) * budget * bounds.width,
+                                         sin(angle) * budget * bounds.height, 0))
+        let inward = Bool.random()
+
+        let move = CABasicAnimation(keyPath: "transform")
+        // The pan starts from the unzoomed state, where there is no overscan and
+        // therefore no offset — the offset only exists in the zoomed state, so
+        // the photo covers the display throughout either direction of travel.
+        move.fromValue = inward ? CATransform3DIdentity : zoomed
+        move.toValue = inward ? zoomed : CATransform3DIdentity
+        move.duration = min(max(Double(photoSeconds), Self.photoSecondsRange.lowerBound),
+                            Self.photoSecondsRange.upperBound)
+        // Linear: a steady drift. Easing makes the move look like it stalls at
+        // each end, which on a screensaver reads as a stutter.
+        move.timingFunction = CAMediaTimingFunction(name: .linear)
+        move.fillMode = .forwards
+        move.isRemovedOnCompletion = false
+        stillLayer.add(move, forKey: Self.kenBurnsKey)
+    }
+
+    /// One photo, decoded and captioned. `@unchecked Sendable` because it
+    /// crosses back from the decode task: `CGImage` is immutable once created
+    /// and safe to hand between threads, but isn't marked as such.
+    private struct DecodedStill: @unchecked Sendable {
+        let image: CGImage
+        let title: String
+        let copyright: String?
+    }
+
+    /// Read one photo at no more resolution than `covering` needs, with its EXIF
+    /// orientation already applied.
+    ///
+    /// `CGImageSourceCreateThumbnailAtIndex` rather than `CreateImageAtIndex`:
+    /// it is the one of the two that applies the orientation tag
+    /// (`WithTransform`), and it takes a size cap. A phone photo decoded without
+    /// that transform is displayed on its side — the still-image version of the
+    /// `preferredTransform` problem `pixelSize(of:)` solves for video.
+    nonisolated private static func decode(_ url: URL, covering target: CGSize) -> DecodedStill? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: cap(for: properties, covering: target),
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else { return nil }
+        let filename = url.deletingPathExtension().lastPathComponent
+        return DecodedStill(image: image,
+                            title: embeddedTitle(properties) ?? filename,
+                            copyright: embeddedCopyright(properties))
+    }
+
+    /// The largest edge worth decoding.
+    ///
+    /// Derived from what covering the frame actually needs rather than from the
+    /// longest edge alone: a 12000×900 panorama filling a 16:9 display needs far
+    /// more of its width than of its height, and capping the long edge would
+    /// starve it. Never asks for more than the file holds.
+    nonisolated private static func cap(for properties: [CFString: Any], covering target: CGSize) -> CGFloat {
+        let width = (properties[kCGImagePropertyPixelWidth] as? CGFloat) ?? 0
+        let height = (properties[kCGImagePropertyPixelHeight] as? CGFloat) ?? 0
+        let fallback = max(target.width, target.height, 1)
+        guard width > 0, height > 0, target.width > 0, target.height > 0 else { return fallback }
+        // Orientations 5–8 are the rotated ones, where the stored pixel
+        // dimensions are the other way round from what will be displayed.
+        let rotated = ((properties[kCGImagePropertyOrientation] as? Int) ?? 1) >= 5
+        let shown = CGSize(width: rotated ? height : width, height: rotated ? width : height)
+        let needed = max(target.width / shown.width, target.height / shown.height)
+        return max(width, height) * min(1, needed)
+    }
+
+    /// A photo's own title, from the fields that actually carry one.
+    ///
+    /// IPTC first — `ObjectName` is the field photo software writes a title into
+    /// — then TIFF's `ImageDescription`, which is where a caption more often
+    /// ends up. Neither is common in a phone photo, which is why the filename
+    /// fallback matters more here than it does for video.
+    nonisolated private static func embeddedTitle(_ properties: [CFString: Any]) -> String? {
+        let iptc = properties[kCGImagePropertyIPTCDictionary] as? [CFString: Any]
+        let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        let candidates = [iptc?[kCGImagePropertyIPTCObjectName] as? String,
+                          tiff?[kCGImagePropertyTIFFImageDescription] as? String]
+        return candidates.compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    nonisolated private static func embeddedCopyright(_ properties: [CFString: Any]) -> String? {
+        let iptc = properties[kCGImagePropertyIPTCDictionary] as? [CFString: Any]
+        let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        let candidates = [iptc?[kCGImagePropertyIPTCCopyrightNotice] as? String,
+                          tiff?[kCGImagePropertyTIFFCopyright] as? String]
+        return candidates.compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 
     // MARK: - Stall watchdog
@@ -520,6 +785,7 @@ final class VideoStage: NSView {
     override func layout() {
         super.layout()
         layoutPlayerLayer()
+        layoutStillLayer()
         layoutNotice()
         overlay.frame = bounds
     }
@@ -535,6 +801,29 @@ final class VideoStage: NSView {
         case .originalSize:
             playerLayer.videoGravity = .resizeAspect
             playerLayer.frame = originalSizeFrame()
+        }
+    }
+
+    /// Where the photo sits. A panning photo fills the display whatever the
+    /// Size setting says — see `panningPhotos` — because a pan has to have
+    /// overscan to move into. Otherwise a photo is fitted exactly like a film.
+    private func layoutStillLayer() {
+        guard currentStill != nil else { return }
+        guard !panningPhotos else {
+            stillLayer.contentsGravity = .resizeAspectFill
+            stillLayer.frame = bounds
+            return
+        }
+        switch scaling {
+        case .fullScreen:
+            stillLayer.contentsGravity = .resizeAspectFill
+            stillLayer.frame = bounds
+        case .fitToScreen:
+            stillLayer.contentsGravity = .resizeAspect
+            stillLayer.frame = bounds
+        case .originalSize:
+            stillLayer.contentsGravity = .resizeAspect
+            stillLayer.frame = originalSizeFrame()
         }
     }
 

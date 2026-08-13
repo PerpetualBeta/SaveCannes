@@ -65,12 +65,27 @@ enum VideoLibrary {
     /// Read fresh on every activation rather than cached, so adding or removing
     /// files takes effect the next time the saver comes up.
     static func playlist() -> [URL] {
-        enabledSources.flatMap(videos(in:))
+        enabledSources.flatMap(items(in:))
+    }
+
+    /// Whether photos join the playlist, read fresh so the setting applies to
+    /// the next activation.
+    ///
+    /// A toggle rather than always-on because a folder of films very often has
+    /// stray images in it — cover art, a poster, a downloaded thumbnail — and
+    /// turning those into slides is not what someone who pointed the saver at
+    /// their films folder asked for. Default on, so a folder of holiday photos
+    /// works with no setup.
+    static var photosEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "photosEnabled")
     }
 
     /// What one source resolves to, whether or not it's enabled — the settings
     /// list needs a count for sources that are switched off too.
-    static func videos(in source: VideoSource) -> [URL] {
+    ///
+    /// "Items" rather than "videos" since 2026-08-13: a source can offer stills
+    /// as well, and the stage plays whichever kind each one turns out to be.
+    static func items(in source: VideoSource) -> [URL] {
         guard let url = source.url else { return [] }
         switch source.kind {
         case .stream:
@@ -80,17 +95,41 @@ enum VideoLibrary {
             // the same way a corrupt file does and being skipped.
             return [url]
         case .file:
-            return isVideo(url) ? [url] : []
+            // A single file the user picked by hand is honoured whichever kind
+            // it is — they chose that exact file, so the photos toggle (which
+            // exists to keep incidental images out of a folder of films) has no
+            // business overruling them.
+            return isVideo(url) || isImage(url) ? [url] : []
         case .folder:
             guard let walker = FileManager.default.enumerator(
                 at: url,
                 includingPropertiesForKeys: [.contentTypeKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { return [] }
+            let playable = photosEnabled ? { isVideo($0) || isImage($0) } : isVideo
             return walker.compactMap { $0 as? URL }
-                .filter(isVideo)
+                .filter(playable)
                 .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
         }
+    }
+
+    /// What a source offers, split by kind, for the settings list.
+    ///
+    /// One walk of the directory rather than one per kind: a source can be
+    /// thousands of entries on a spinning disk, and this runs on every
+    /// appearance of the Settings window.
+    struct Tally {
+        var videos = 0
+        var photos = 0
+        var total: Int { videos + photos }
+    }
+
+    static func tally(in source: VideoSource) -> Tally {
+        var tally = Tally()
+        for url in items(in: source) {
+            if isVideo(url) { tally.videos += 1 } else { tally.photos += 1 }
+        }
+        return tally
     }
 
     /// The playlist in the order it should be played: shuffled for random,
@@ -118,8 +157,24 @@ enum VideoLibrary {
     /// fails later; `VideoStage` handles that by moving to the next
     /// candidate.
     static func isVideo(_ url: URL) -> Bool {
-        guard let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType
-        else { return false }
-        return type.conforms(to: .movie)
+        contentType(of: url)?.conforms(to: .movie) ?? false
+    }
+
+    /// True when macOS recognises the file as a still image.
+    ///
+    /// Same type-based test as `isVideo`, and it inherits the same property:
+    /// anything the system knows as an image counts — JPEG, PNG, HEIC, TIFF, a
+    /// RAW file from a camera — without this code carrying a list of extensions
+    /// that would be out of date the moment a new format appears.
+    ///
+    /// Deliberately excludes PDFs and SVGs, which conform to neither
+    /// `UTType.image` nor `.movie`, and which nobody means by "the photos in
+    /// this folder".
+    static func isImage(_ url: URL) -> Bool {
+        contentType(of: url)?.conforms(to: .image) ?? false
+    }
+
+    private static func contentType(of url: URL) -> UTType? {
+        (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType
     }
 }
