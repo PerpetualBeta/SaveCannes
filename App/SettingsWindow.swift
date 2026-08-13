@@ -79,8 +79,25 @@ struct SaveCannesSettingsContent: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            ForEach($sources) { $source in
+            ForEach(Array(sources.enumerated()), id: \.element.id) { index, source in
                 HStack(spacing: 8) {
+                    // Up/down rather than drag: a Form section's ForEach has no
+                    // `onMove`, and nesting a List inside one to get it brings a
+                    // second scroll view into a window that already scrolls.
+                    // Buttons are also reachable from the keyboard, which a drag
+                    // handle isn't.
+                    VStack(spacing: 1) {
+                        Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
+                            .disabled(index == 0)
+                            .help(L10n.string("settings.move_up", defaultValue: "Play this source earlier"))
+                        Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
+                            .disabled(index == sources.count - 1)
+                            .help(L10n.string("settings.move_down", defaultValue: "Play this source later"))
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
                     Image(systemName: source.symbolName)
                         .foregroundStyle(.secondary)
                         .frame(width: 16)
@@ -109,9 +126,10 @@ struct SaveCannesSettingsContent: View {
                     // The toggle is "include in playback" — it leaves the source
                     // registered so switching it back on doesn't mean finding it
                     // again.
-                    Toggle("", isOn: $source.isEnabled)
+                    Toggle("", isOn: Binding(
+                        get: { sources[index].isEnabled },
+                        set: { sources[index].isEnabled = $0; commit() }))
                         .labelsHidden()
-                        .onChange(of: source.isEnabled) { commit() }
                 }
             }
 
@@ -313,6 +331,17 @@ struct SaveCannesSettingsContent: View {
         sources.append(source)
         newURL = ""
         scLog("added stream \(source.location)")
+        commit()
+    }
+
+    /// Swap a source with its neighbour. Order is what sequential playback
+    /// follows, so this is the only way to say "this folder first" without
+    /// removing and re-adding everything after it.
+    private func move(_ index: Int, by delta: Int) {
+        let target = index + delta
+        guard sources.indices.contains(index), sources.indices.contains(target) else { return }
+        sources.swapAt(index, target)
+        scLog("moved \(sources[target].location) to position \(index + 1)")
         commit()
     }
 

@@ -98,6 +98,8 @@ NASA's older addresses are gone: the ISS **HDEV** experiment ended in 2020, and 
 
 Each source has a switch. Turning one off leaves it in the list, which is the point: the alternative is deleting a source to stop playing it and then having to find it again. A source that's off is dimmed and its videos are excluded from the playlist, though its count still shows so you know what you're switching back on.
 
+The chevrons at the left of each row move a source up or down. That matters in sequential order, which plays the sources in the order they're listed — so this is how you say "this folder first" without removing and re-adding everything after it. (Up and down buttons rather than dragging: a settings form can't host a drag-reorderable list without nesting a second scroll view inside a window that already scrolls, and buttons work from the keyboard.)
+
 Removing a source is the minus button beside it. Nothing is ever moved or altered on disk — Save Cannes only ever reads.
 
 > **A note on protected folders.** If a folder lives in Desktop, Documents or Downloads, macOS asks permission the first time. Save Cannes triggers that prompt as you add it, while you're looking at Settings, rather than later from behind a fullscreen saver where you couldn't see it.
