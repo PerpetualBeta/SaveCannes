@@ -149,6 +149,12 @@ struct SaveCannesSettingsContent: View {
                     // the field style a Form gives its own rows, so it sat proud of the
                     // label and the button beside it. Four layouts were rendered and
                     // compared by eye; the Form's own style is the one that lines up.
+                    //
+                    // Claim the width between the label and the button. A Form row
+                    // trailing-aligns its content, so without this the field asks for
+                    // its ideal width — which for an empty field is almost nothing, and
+                    // the wider the window the more of it goes to empty space.
+                    .frame(maxWidth: .infinity)
                     .onSubmit { addStream() }
                 Button(L10n.string("settings.add_stream", defaultValue: "Add")) { addStream() }
                     .disabled(VideoSource.forTypedURL(newURL) == nil)
