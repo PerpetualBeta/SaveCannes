@@ -24,6 +24,17 @@ struct PhotoLayers: @unchecked Sendable {
     /// How much of the frame the subject covers, 0–1. Kept because it decides
     /// whether the effect is worth applying at all.
     let subjectShare: CGFloat
+    /// Where the subject meets the world, normalised to the photo with the origin
+    /// at the bottom left: across, the middle of it; up, the foot of it.
+    ///
+    /// The point the subject grows about, and the reason the effect can be strong
+    /// at all. Growing a subject about its middle slides its feet down through
+    /// whatever it is standing on. Growing it about its foot keeps the feet where
+    /// they are and moves the head, which is what somebody walking towards you
+    /// does. It also means the grown subject contains the hole it was cut from, so
+    /// there is never anything behind it to come into view — which is what capped
+    /// the sliding version at a strength too small to see.
+    let anchor: CGPoint
 }
 
 enum PhotoParallax {
@@ -100,11 +111,55 @@ enum PhotoParallax {
             kCIInputMaskImageKey: grown,
         ])
 
-        guard let sceneImage = context.createCGImage(scene, from: photo.extent),
+        guard let anchor = contactPoint(of: grown),
+              let sceneImage = context.createCGImage(scene, from: photo.extent),
               let subjectImage = context.createCGImage(subject, from: photo.extent)
         else { return nil }
-        return PhotoLayers(scene: sceneImage, subject: subjectImage, subjectShare: share)
+        return PhotoLayers(scene: sceneImage, subject: subjectImage, subjectShare: share,
+                           anchor: anchor)
     }
+
+    /// The middle of the subject across, and the foot of it up.
+    ///
+    /// Measured on a small raster of the mask. Where the subject's foot is, is a
+    /// property of its shape rather than of the photo's resolution, and reducing
+    /// the mask first averages away the stray pixel that would otherwise decide
+    /// the answer on its own.
+    private static func contactPoint(of mask: CIImage) -> CGPoint? {
+        let extent = mask.extent
+        guard extent.width > 0, extent.height > 0 else { return nil }
+        let scale = min(1, contactRasterEdge / max(extent.width, extent.height))
+        let small = mask.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let width = max(1, Int(small.extent.width))
+        let height = max(1, Int(small.extent.height))
+        var pixels = [Float](repeating: 0, count: width * height * 4)
+        context.render(small, toBitmap: &pixels, rowBytes: width * 16,
+                       bounds: CGRect(x: 0, y: 0, width: width, height: height),
+                       format: .RGBAf, colorSpace: nil)
+
+        var mass = 0.0
+        var weightedX = 0.0
+        var lowest: Int?
+        for row in 0..<height {
+            for column in 0..<width {
+                let value = Double(pixels[(row * width + column) * 4])
+                guard value.isFinite, value > 0 else { continue }
+                mass += value
+                weightedX += value * (Double(column) + 0.5) / Double(width)
+                // Half way up the mask's own ramp is the edge of the subject; it
+                // is an alpha, so that is where inside stops being inside.
+                if value >= 0.5 { lowest = max(lowest ?? row, row) }
+            }
+        }
+        guard mass > 0, let bottomRow = lowest else { return nil }
+        // Row 0 is the top of the photo — measured, in the same way and for the
+        // same reason as in `PhotoFocus.centreOfAttention`.
+        return CGPoint(x: weightedX / mass,
+                       y: 1 - (Double(bottomRow) + 0.5) / Double(height))
+    }
+
+    /// The long edge, in pixels, the contact point is measured at.
+    private static let contactRasterEdge: CGFloat = 192
 
     /// What to put where the subject was.
     ///

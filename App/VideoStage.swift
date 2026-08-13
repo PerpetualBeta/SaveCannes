@@ -76,6 +76,9 @@ final class VideoStage: NSView {
     /// crop and the pan are aimed at it; nil means neither is, which is how
     /// photos were framed before it was measured.
     private(set) var currentFocus: PhotoFocus?
+    /// Where the photo's subject meets the world, when one was lifted — the point
+    /// the subject grows about. See `PhotoLayers.anchor`.
+    private var currentAnchor: CGPoint?
     private var notice: NSTextField?
     private let overlay = TitleOverlay(frame: .zero)
     /// What the caption should say for the item playing now, kept so the
@@ -361,18 +364,19 @@ final class VideoStage: NSView {
     /// a photo that only just covered the screen begins to look soft.
     static let kenBurnsZoomRange: ClosedRange<CGFloat> = 1...1.5
 
-    /// How much further a lifted subject travels than the scene behind it, as a
-    /// fraction of the scene's own move.
+    /// How much faster a lifted subject grows than the scene behind it, as a
+    /// multiple of the scene's own zoom.
     ///
-    /// Deliberately small. What is revealed from behind a subject that has moved
-    /// is a smear rather than real scenery — there is no photograph of what was
-    /// behind it — so the further the subject travels, the more of that smear
-    /// comes out from behind it. This is the distance at which the seam stays
-    /// under the subject.
-    static let defaultParallaxStrength: CGFloat = 0.6
-    /// What a stored strength is allowed to be. Zero is the effect off; the top
-    /// is where the smear behind the subject stops being hidden by it.
-    static let parallaxStrengthRange: ClosedRange<CGFloat> = 0...2
+    /// It can be this large because the subject grows about the point where it
+    /// meets the world rather than sliding across it: growing keeps the subject
+    /// over the hole it was cut from, so the invented scenery behind it never
+    /// comes into view. The first version of this slid the subject instead, and
+    /// had to be kept so small to hide the seam that the effect was barely there.
+    static let defaultParallaxStrength: CGFloat = 2.5
+    /// What a stored strength is allowed to be. Zero is the effect off; past the
+    /// top the subject stops looking like it is coming closer and starts looking
+    /// like a cut-out being scaled up on top of a photograph.
+    static let parallaxStrengthRange: ClosedRange<CGFloat> = 0...6
     /// How much of the available overscan a pan may spend. Short of all of it so
     /// rounding can't put an edge exactly on the boundary.
     private static let panBudgetFraction: CGFloat = 0.75
@@ -442,6 +446,7 @@ final class VideoStage: NSView {
         playerLayer.isHidden = true
         currentStill = (url, decoded.image)
         currentFocus = decoded.focus
+        currentAnchor = decoded.layers?.anchor
         currentPixelSize = CGSize(width: decoded.image.width, height: decoded.image.height)
         stillLayer.isHidden = false
         // No implicit animation on the swap. CALayer cross-fades a `contents`
@@ -503,6 +508,7 @@ final class VideoStage: NSView {
         subjectLayer.isHidden = true
         currentStill = nil
         currentFocus = nil
+        currentAnchor = nil
         playerLayer.isHidden = false
     }
 
@@ -533,16 +539,24 @@ final class VideoStage: NSView {
         let inward = Bool.random()
         animate(stillLayer, to: zoom, offset: offset, inward: inward)
 
-        // The subject, when there is one, travels the same path further: nearer
-        // things move more in a real camera move, and that difference is the
-        // whole of the effect. Both layers start from the identity, so they are
-        // exactly registered at the near end of the move and drift apart towards
-        // the far end — which is also why the seam behind the subject is at its
-        // most hidden at the moment there is most to see.
-        guard !subjectLayer.isHidden else { return }
-        let strength = photoParallaxStrength
-        animate(subjectLayer, to: 1 + (zoom - 1) * (1 + strength),
-                offset: CGPoint(x: offset.x * (1 + strength), y: offset.y * (1 + strength)),
+        // The subject, when there is one, grows faster than the scene — nearer
+        // things do, in a real camera move, and that difference is the whole of
+        // the effect. It grows about the point where it meets the world, and the
+        // translation below is the one that keeps that point exactly where the
+        // scene puts it: not only at the two ends of the move but at every frame
+        // between them, since Core Animation interpolates both transforms
+        // element by element and the two expressions stay equal under that.
+        //
+        // So the feet stay planted, and the subject always covers the hole it
+        // came out of. Both of those are why this can be worth seeing where the
+        // sliding version wasn't.
+        guard !subjectLayer.isHidden, let anchor = currentAnchor else { return }
+        let frame = stillLayer.frame
+        let middle = CGPoint(x: frame.width / 2, y: frame.height / 2)
+        let contact = CGPoint(x: anchor.x * frame.width, y: anchor.y * frame.height)
+        animate(subjectLayer, to: zoom + (zoom - 1) * photoParallaxStrength,
+                offset: CGPoint(x: (middle.x - contact.x) * (1 - zoom) + offset.x,
+                                y: (middle.y - contact.y) * (1 - zoom) + offset.y),
                 inward: inward)
     }
 
@@ -972,8 +986,14 @@ final class VideoStage: NSView {
     /// The subject sits in exactly the frame the photo does — it was cut out of
     /// it at the same size, so anything else would put it somewhere it wasn't.
     /// Its transform is what differs, not its geometry.
+    ///
+    /// Except for the anchor point, which is moved to where the subject meets the
+    /// world so that its transform grows it about that point. Set before the
+    /// frame: changing an anchor point on its own moves the layer, and setting the
+    /// frame afterwards is what puts it back.
     private func matchSubjectToPhoto() {
         subjectLayer.contentsGravity = stillLayer.contentsGravity
+        subjectLayer.anchorPoint = currentAnchor ?? CGPoint(x: 0.5, y: 0.5)
         subjectLayer.frame = stillLayer.frame
     }
 
