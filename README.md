@@ -74,6 +74,28 @@ Add as many as you like, of three kinds:
 - **Files** are single videos, played on loop when they're the only source.
 - **Streams** are URLs handed straight to the player. That means they have to be something it can open by itself — an **HLS `.m3u8`** or a **direct MP4** — not a web page it would have to scrape, which rules out YouTube and the like by design rather than by omission. Only `http` and `https` are accepted, because those are the schemes that actually play; offering others would mean offering something that silently never works.
 
+#### Streams known to work
+
+Verified working when this was written, and useful for different things:
+
+| Stream | URL | Notes |
+|---|---|---|
+| **NASA+** | `…mediatailor.us-east-1.amazonaws.com/v1/channel/NASAPrime/NASAPlus.m3u8` | Live, 24/7, Earth and space footage. The best fit for a screensaver. |
+| **DW English** | `https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8` | Live, 24/7 news. |
+| **Apple's sample** | `https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8` | On-demand, so it *ends* — which is what you want for testing hand-over to the next source. |
+
+NASA+'s address is generated infrastructure and should be expected to rotate. When it stops working, ask NASA for the current one rather than assuming the service has gone:
+
+```sh
+curl -s https://plus.nasa.gov/wp-json/nasaplus/v1/live-streams | python3 -m json.tool
+```
+
+That's an open REST route on a public-domain government service — no key, no token, no signature — which is the distinction that makes it fair game where a URL prised out of a player's innards would not be. The same call sometimes lists extra channels (an eclipse feed, for instance) that turn out to be recordings rather than live.
+
+NASA's older addresses are gone: the ISS **HDEV** experiment ended in 2020, and the `ntv1`/`ntv2` NASA TV endpoints now return 403.
+
+> **A live stream never hands over.** It has no end, so once a display lands on one it stays there until you dismiss the saver — the playlist can't advance past something that never finishes. That's inherent rather than a fault, but it does mean a live stream mixed into a folder of films will eventually take that display for the rest of the session.
+
 Each source has a switch. Turning one off leaves it in the list, which is the point: the alternative is deleting a source to stop playing it and then having to find it again. A source that's off is dimmed and its videos are excluded from the playlist, though its count still shows so you know what you're switching back on.
 
 Removing a source is the minus button beside it. Nothing is ever moved or altered on disk — Save Cannes only ever reads.
