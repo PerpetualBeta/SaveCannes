@@ -67,11 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // right amount is a matter of taste on one's own photos, and the default
         // is the one that reads as a camera move rather than as drift.
         "kenBurnsZoom":              VideoStage.defaultKenBurnsZoom,
-        // Also not in Settings, and off: lifting the subject of a photo off its
-        // background and moving the two apart is still being judged by eye.
-        "parallaxEnabled":           false,
-        "parallaxStrength":          VideoStage.defaultParallaxStrength,
-        "parallaxDepthSpread":       PhotoParallax.defaultDepthSpread,
     ]
 
     private var idleThresholdSeconds: Double {
