@@ -142,6 +142,7 @@ final class ScreensaverWindow {
         stage.startOffset = startOffset
         stage.titleMode = TitleMode(rawValue: defs.integer(forKey: "titleMode")) ?? .atStart
         stage.titleRepeatMinutes = defs.integer(forKey: "titleRepeatMinutes")
+        stage.photoSeconds = defs.integer(forKey: "photoSeconds")
 
         container.addSubview(stage)
         scLog("ScreensaverWindow built for \(screen.localizedName), audio=\(audioEnabled)")

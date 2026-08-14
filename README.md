@@ -1,6 +1,6 @@
 # Save Cannes
 
-Plays your own videos as a macOS screensaver. Point it at films, folders of them, or a live stream, and it takes over every display when your Mac goes quiet.
+Plays your own videos and photos as a macOS screensaver. Point it at films, folders of them, a folder of photographs, or a live stream, and it takes over every display when your Mac goes quiet.
 
 A tribute to [Save Hollywood](http://s.sudre.free.fr/Software/SaveHollywood/about.html) by WhiteBox — the much-loved saver that did exactly this, until macOS broke it. Same idea, rebuilt from scratch on the modern Jorvik screensaver pattern.
 
@@ -45,6 +45,7 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 - **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
+- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. A folder of them isn't a slideshow: each arrives as a paper print thrown onto a desk, landing on the pile the last one left — and where a print is supposed to be still, the picture inside it drifts in and out of focus, carries a shake that isn't there, and comes apart into static and blocks. See **Photos** below.
 - **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
 - **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
 - **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
@@ -54,9 +55,10 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 Click the menu bar icon → **Settings…** for:
 
 - **Permissions** — accessibility status (required only if you enable Lock Screen on dismiss)
-- **Sources** — the folders, files and streams to play, each with an include-in-playback switch and a count of what was found
+- **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
 - **Playback** — order, and sound
 - **Display** — how each video is fitted to the screen, and whether every display shows the same one
+- **Photos** — whether photos play, how long each is held, and whether they pan and zoom
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, and a global "Play now" hotkey
 - **On dismiss** — toggle to lock the screen automatically when the saver dismisses
@@ -71,8 +73,10 @@ All settings persist immediately, no Save/OK button. Changes apply the next time
 Add as many as you like, of three kinds:
 
 - **Folders** are walked recursively, so subfolders are included and a library organised one-folder-per-film needs no flattening. Hidden files are skipped, and bundles (a `.photoslibrary`, an `.app`) aren't opened up.
-- **Files** are single videos, played on loop when they're the only source.
+- **Files** are single videos or photos, played on loop when they're the only source.
 - **Streams** are URLs handed straight to the player. That means they have to be something it can open by itself — an **HLS `.m3u8`** or a **direct MP4** — not a web page it would have to scrape, which rules out YouTube and the like by design rather than by omission. Only `http` and `https` are accepted, because those are the schemes that actually play; offering others would mean offering something that silently never works.
+
+Each source on disk has a **magnifying-glass button** that shows it in Finder — a folder opens so you can see what's in it, a single file is revealed in its enclosing folder. Worth a click before you walk away, to be sure the saver is pointed where you think it is.
 
 #### Streams known to work
 
@@ -104,10 +108,82 @@ Removing a source is the minus button beside it. Nothing is ever moved or altere
 
 > **A note on protected folders.** If a folder lives in Desktop, Documents or Downloads, macOS asks permission the first time. Save Cannes triggers that prompt as you add it, while you're looking at Settings, rather than later from behind a fullscreen saver where you couldn't see it.
 
+### Photos
+
+Photos in a source folder join the playlist alongside the videos, and each is held for a few seconds before the next lands. A folder of them is shown as a desk with the prints piling up on it — see below.
+
+- **Any image type macOS recognises** counts — JPEG, PNG, HEIC, TIFF, camera RAW. Rather than a list of extensions, the file's actual type is asked of the system, so a format added to macOS in future works without a change here. PDFs and SVGs aren't images by that test, and aren't played.
+- **Orientation is honoured.** A phone photo with an EXIF rotation tag is shown upright rather than on its side.
+- **The photo's own title** is used for the on-screen caption when its IPTC or TIFF fields carry one, and its copyright line likewise. Otherwise the filename, exactly as for a video.
+- **Turn photos off** if your film folders have cover art or downloaded posters in them that you'd rather not see as slides. A file you picked by hand is always played whichever kind it is — you chose that exact file.
+
+#### A desk, not a slideshow
+
+A folder of photographs isn't shown as a slideshow. Each one arrives as a **paper print
+with a white border, thrown down onto a desk**, landing on top of whatever is already
+lying there — so what builds up over a few minutes is a pile, and the collection is the
+thing you're watching rather than any single picture in it.
+
+And then the trick. **The paper is dead still, and the picture inside it is not.** A print
+that has landed never moves again — but the image in its window drifts in and out of
+focus, carries the shake of a hand that isn't there, and every so often comes apart into
+blocks, or static, or a mess of compression, and puts itself back together. Prints are not
+supposed to do that, which is the point.
+
+- **Only the newest print is alive.** As each new one comes down, the one it buries stops
+  moving and loses its colour, so the pile beneath is monochrome and the picture on top is
+  the only thing in the frame doing anything.
+- **Focus hunts rather than drifts** — it holds a distance, then racks quickly to another,
+  the way a lens does when it can't make up its mind. Where the photo *has* a subject, the
+  subject is held sharp and only the world behind it goes soft; where it hasn't, the whole
+  picture drifts together.
+- **The shake is a knock, not a sway.** Nothing happens for a second or two, then the
+  frame is jolted and settles. It shakes inside the paper's window: the print does not
+  move with it.
+- **Reduce Motion** in System Settings → Accessibility is honoured. Prints still land and
+  still pile up, because the collection is the point — but nothing shakes, hunts focus or
+  comes apart, and they arrive without the fall.
+
+None of this is configurable, deliberately. It's what a folder of images does here.
+
+**How the subject is found.** macOS's Vision framework will hand over a subject mask for
+very nearly any photograph, so its word alone isn't worth much. Instead the answer is
+built from things that don't depend on each other: whether the masked region really is
+nearer than the rest of the picture, whether its outline sits on a *step* in the depth
+rather than running through flat ground, whether the place a person would look falls
+inside it, and whether it's one compact thing rather than several scraps of scenery. All
+four have to agree. Measured across fourteen photographs, that accepted every one with a
+subject and rejected every one without — the single case it turns down that does contain a
+person is a figure occupying 0.4% of the frame, where holding it sharp would make no
+visible difference anyway.
+
+Depth comes from **Depth Anything V2 Small**, a Core ML model from Apple's own model
+library, used under the Apache 2.0 licence and shipped inside the app (about 18MB of it).
+Nothing is uploaded and nothing is asked of the network — the model runs on your Mac, on
+your photographs, and Save Cannes has no network access for anything but its own update
+check. On a Mac where the model can't be loaded, photographs still pile up on the desk and
+still shake and glitch; they just don't drift in and out of focus.
+
+#### Every photo in a folder, before the next film
+
+A folder of photographs is a **collection**, and it only reads as one if the whole folder
+goes past before something else starts. So the images in a directory are kept together as a
+run: once the first of them comes up, the rest follow, and only then does the next film
+play.
+
+In **random** order the runs are shuffled and the images *within* each run are shuffled
+too — which gives full coverage without repeats, because a shuffle is a selection without
+replacement. Every image in the folder is shown exactly once before any of them comes
+round again. In **sequential** order it's the same grouping in path order.
+
+Grouped by the directory each image actually sits in, rather than by the source you added,
+because a source pointed at a photo library is usually a tree of albums — and it's the
+album that's the collection.
+
 ### Playback order
 
-- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice.
-- **Sequential** — each source in turn, in the order they're listed, and each source's videos in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
+- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice. A directory of photographs is shuffled as one unit and kept together — see **Every photo in a folder, before the next film** above.
+- **Sequential** — each source in turn, in the order they're listed, and each source's files in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
 
 ### Size on screen
 
@@ -165,6 +241,8 @@ The frame is pulled from the video file rather than grabbed off the screen, so y
 
 That also means a **live stream can't be captured**: there's no file to seek into. On-demand streams are fine.
 
+A **photo** is re-read from its own file at full size, so what lands in `~/Pictures/Save Cannes/` is the whole photograph rather than the display-sized, cropped, part-way-through-a-zoom version that was on screen.
+
 ## Auto-update
 
 Save Cannes uses [Sparkle 2.x](https://sparkle-project.org/) for auto-update. Updates check daily against `https://jorviksoftware.cc/appcasts/savecannes.xml`. Trigger a manual check via the menu's **Check for Updates…** item.
@@ -175,11 +253,13 @@ Updates are EdDSA-signed; your copy will only install genuine Jorvik Software re
 
 - **No telemetry.** No usage reporting, no log file at all unless you explicitly turn one on (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES` writes timestamped lifecycle lines to `~/Library/Logs/Save Cannes/savecannes.log`; off by default), no network requests beyond Sparkle's appcast fetch.
 - **No camera, microphone, or screen recording.** Your videos are read from the folder you chose and played locally. Nothing is copied, indexed, or uploaded.
-- **Permissions:** if the folder you choose lives in Desktop, Documents, Downloads, or on an external drive, macOS will ask you to allow access the first time. Save Cannes triggers that prompt at the moment you pick the folder — while you're looking at Settings — rather than later from behind a fullscreen saver where you couldn't see it. Accessibility is requested only if you enable "Lock screen when dismissed".
+- **Photographs are examined on your Mac.** The desk effect asks Vision where a photograph's subject is and runs a Core ML depth model over it, both entirely locally, on the machine, against files you pointed the app at. The model ships inside the app; no photograph, and nothing derived from one, leaves the Mac or touches the network.
+- **Permissions:** if the folder you choose lives in Desktop, Documents, Downloads, or on an external drive, macOS will ask you to allow access the first time. Save Cannes triggers that prompt at the moment you pick the folder — while you're looking at Settings — rather than later from behind a fullscreen saver where you couldn't see it. Accessibility is requested only if you enable "Lock screen when dismissed". The Permissions row in Settings follows the switch in System Settings as you flip it, without needing the window closed and reopened — about a second and a half behind, which is how long macOS takes to commit the change and be willing to admit it.
 
 ## Architecture
 
-- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), the source list and its storage (`VideoSource`), source resolution (`VideoLibrary`), the title caption (`TitleOverlay`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration.
+- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), the source list and its storage (`VideoSource`), source resolution and run grouping (`VideoLibrary`), the title caption (`TitleOverlay`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration, and the Accessibility permission watcher (`AccessibilityWatcher`).
+- **The desk** (`App/PhotoDesk*.swift`, `App/PhotoDepth.swift`, `App/PhotoFocus.swift`) — what a folder of photographs does: the look and the motion model, the Metal shaders, the desk surface and its canvas, monocular depth and the subject-certainty gate, and Vision's attention point. `Resources/DepthAnythingV2Small.mlmodelc` is the depth model, Apache 2.0, shipped compiled.
 - **JorvikKit** (`App/JorvikKit/`) — vendored shared components from the Jorvik suite (About modal, Settings frame, shortcut recorder, Sparkle focus guard, localisation shim, window helper).
 - **Sparkle** (`Sparkle.framework`) — vendored 2.9.1 binary, embedded under `Contents/Frameworks/`.
 

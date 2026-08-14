@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import ImageIO
 
 /// Save the frame currently on screen as a PNG in
 /// `~/Pictures/Save Cannes/screenshot-TIMESTAMP.png`.
@@ -15,6 +16,13 @@ import AVFoundation
 enum Screenshot {
 
     static func capture(from stage: VideoStage) {
+        // A photo isn't in the player at all, so there is no frame to extract —
+        // it is re-read from its own file instead, at full resolution rather
+        // than the display-sized copy that was put on screen.
+        if let still = stage.currentStill {
+            capturePhoto(at: still.url)
+            return
+        }
         guard let frame = stage.currentFrame else {
             scLog("screenshot: nothing playing")
             return
@@ -38,6 +46,29 @@ enum Screenshot {
             }
             saveToPicturesFolder(data)
         }
+    }
+
+    /// Re-decode the photo on screen at its own full size, orientation applied,
+    /// and save that.
+    ///
+    /// No `ThumbnailMaxPixelSize`, which is what makes this the full-size read;
+    /// `WithTransform` is still needed or a portrait photo is saved on its side.
+    private static func capturePhoto(at url: URL) {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            scLog("screenshot: could not read \(url.lastPathComponent)")
+            return
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+        else {
+            scLog("screenshot: PNG encode failed for \(url.lastPathComponent)")
+            return
+        }
+        saveToPicturesFolder(data)
     }
 
     private static func saveToPicturesFolder(_ pngData: Data) {

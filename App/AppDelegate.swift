@@ -59,6 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "differentVideoPerDisplay":  true,
         "titleMode":                 TitleMode.atStart.rawValue,
         "titleRepeatMinutes":        5,
+        "photosEnabled":             true,
+        "photoSeconds":              8,
+        // Not in Settings: how far a photo zooms over its time on screen, and
+        // with it how far it pans. A knob rather than a control because the
+        // right amount is a matter of taste on one's own photos, and the default
+        // is the one that reads as a camera move rather than as drift.
     ]
 
     private var idleThresholdSeconds: Double {
@@ -85,6 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
         installEditMenu()
         scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s")
+        // Whether this process is trusted, recorded at launch. Worth having: the answer
+        // is per *process*, not just per app, and a process that has had the permission
+        // revoked under it cannot regain it — so "the switch is on but the app disagrees"
+        // is answered by comparing this line against when the app was started.
+        scLog("accessibility at launch: " + (AXIsProcessTrusted() ? "granted" : "NOT granted"))
         registerAtLoginIfNeeded()
         // Touch the lazy property so the updater starts and begins its
         // scheduled-check timer.
