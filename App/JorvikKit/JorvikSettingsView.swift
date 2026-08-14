@@ -3,6 +3,17 @@ import ServiceManagement
 
 struct JorvikSettingsView<AppSettings: View>: View {
     let appName: String
+    /// Whether to offer **Launch at Login**.
+    ///
+    /// Defaults to `true`, which is right for the menu-bar apps this shell was
+    /// written for: an agent that is not running does nothing, so starting it at
+    /// login is the point. It is wrong for an app you open, use and quit — offering
+    /// to launch a wallpaper editor at every login invites the user to leave
+    /// something resident that has no reason to be.
+    ///
+    /// A defaulted parameter rather than an edit, so every app that already copies
+    /// this file keeps its current behaviour untouched.
+    var showsLaunchAtLogin: Bool = true
     @ViewBuilder let appSettings: () -> AppSettings
 
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
@@ -18,22 +29,24 @@ struct JorvikSettingsView<AppSettings: View>: View {
                 // App-specific settings first (if any)
                 appSettings()
 
-                Section(L10n.string("settings.general", defaultValue: "General")) {
-                    Toggle(
-                        L10n.string("settings.launch_at_login", defaultValue: "Launch at Login"),
-                        isOn: $launchAtLogin
-                    )
-                        .onChange(of: launchAtLogin) { _, newValue in
-                            do {
-                                if newValue {
-                                    try SMAppService.mainApp.register()
-                                } else {
-                                    try SMAppService.mainApp.unregister()
+                if showsLaunchAtLogin {
+                    Section(L10n.string("settings.general", defaultValue: "General")) {
+                        Toggle(
+                            L10n.string("settings.launch_at_login", defaultValue: "Launch at Login"),
+                            isOn: $launchAtLogin
+                        )
+                            .onChange(of: launchAtLogin) { _, newValue in
+                                do {
+                                    if newValue {
+                                        try SMAppService.mainApp.register()
+                                    } else {
+                                        try SMAppService.mainApp.unregister()
+                                    }
+                                } catch {
+                                    launchAtLogin = SMAppService.mainApp.status == .enabled
                                 }
-                            } catch {
-                                launchAtLogin = SMAppService.mainApp.status == .enabled
                             }
-                        }
+                    }
                 }
 
             }
@@ -61,7 +74,11 @@ struct JorvikSettingsView<AppSettings: View>: View {
                minHeight: JorvikSettingsMetrics.minContentSize.height)
     }
 
-    static func showWindow(appName: String, @ViewBuilder appSettings: @escaping () -> AppSettings) {
+    static func showWindow(
+        appName: String,
+        showsLaunchAtLogin: Bool = true,
+        @ViewBuilder appSettings: @escaping () -> AppSettings
+    ) {
         if let window = JorvikSettingsWindowCache.existingWindow {
             // Sized for whichever display it last appeared on, which may not be this one.
             JorvikSettingsWindowCache.sizer?.clamp()
@@ -85,6 +102,7 @@ struct JorvikSettingsView<AppSettings: View>: View {
 
         let view = JorvikSettingsView(
             appName: appName,
+            showsLaunchAtLogin: showsLaunchAtLogin,
             appSettings: appSettings
         )
         let controller = NSHostingController(rootView: view)
