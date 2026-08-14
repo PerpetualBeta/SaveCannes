@@ -28,12 +28,14 @@ ALSO_SHIP_PKG    := true
 
 SWIFT_FRAMEWORKS := Cocoa AVFoundation CoreMedia CoreGraphics QuartzCore \
                     UniformTypeIdentifiers ServiceManagement Carbon \
-                    Vision CoreVideo
+                    Vision CoreVideo Metal CoreML Accelerate
 
 SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift \
                     App/ScreensaverWindow.swift \
                     App/VideoStage.swift App/VideoLibrary.swift App/VideoSource.swift \
-                    App/PhotoFocus.swift \
+                    App/PhotoFocus.swift App/PhotoDepth.swift \
+                    App/PhotoDesk.swift App/PhotoDeskShaders.swift \
+                    App/PhotoDeskSurface.swift \
                     App/TitleOverlay.swift \
                     App/StatusItem.swift App/SettingsWindow.swift \
                     App/HotkeyManager.swift \

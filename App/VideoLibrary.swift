@@ -132,16 +132,64 @@ enum VideoLibrary {
         return tally
     }
 
-    /// The playlist in the order it should be played: shuffled for random,
-    /// path order for sequential.
+    /// The playlist in the order it should be played: shuffled for random, path order
+    /// for sequential.
     ///
-    /// Separate from `playlist()` because the two callers need it at
-    /// different moments. A stage playing its own list orders it per pass;
-    /// when every display mirrors one list, `AppDelegate` orders it once and
-    /// hands the same array to all of them.
-    static func orderedPlaylist(_ order: PlaybackOrder) -> [URL] {
-        let all = playlist()
-        return order == .random ? all.shuffled() : all
+    /// Not a plain shuffle of the files. A directory of stills is a *collection*, and
+    /// the desk it is shown on only reads as one if the whole directory goes past
+    /// before the next film — so the images from one directory are held together as a
+    /// run, and it is the runs that get shuffled rather than the individual files.
+    ///
+    /// Inside a run the images are shuffled too, which is what gives full coverage
+    /// without repeats: a shuffle is a selection without replacement, so every image
+    /// in the directory is shown exactly once before any of them comes round again.
+    /// There is no pool to remove from because the shuffle *is* the removal.
+    ///
+    /// Separate from `playlist()` because the two callers need it at different
+    /// moments. A stage playing its own list orders it per pass; when every display
+    /// mirrors one list, `AppDelegate` orders it once and hands the same array to all
+    /// of them.
+    ///
+    /// - Parameter startingAtRun: which run this display begins at, for "different
+    ///   video on each display". Counted in runs rather than in files, because
+    ///   starting a display halfway through a directory would break the very thing
+    ///   the grouping exists to guarantee.
+    static func orderedPlaylist(_ order: PlaybackOrder, startingAtRun offset: Int = 0) -> [URL] {
+        var runs = runs(in: playlist())
+        if order == .random {
+            runs = runs.shuffled().map { $0.count > 1 ? $0.shuffled() : $0 }
+        }
+        guard !runs.isEmpty else { return [] }
+        // Rotating rather than slicing means a display that starts at run 3 still plays
+        // runs 1 and 2 afterwards — every display sees the whole library, just from a
+        // different point in it.
+        let from = ((offset % runs.count) + runs.count) % runs.count
+        return (Array(runs[from...]) + Array(runs[..<from])).flatMap { $0 }
+    }
+
+    /// The playlist split into the runs that have to stay together: one run per film,
+    /// and one run per directory of stills.
+    ///
+    /// Grouped by the directory each image actually sits in rather than by the source
+    /// it came from, because a source pointed at a photo library is usually a tree of
+    /// albums, and it is the album that is the collection.
+    static func runs(in items: [URL]) -> [[URL]] {
+        var runs: [[URL]] = []
+        var whereFrom: [URL: Int] = [:]
+        for item in items {
+            guard isImage(item) else {
+                runs.append([item])
+                continue
+            }
+            let directory = item.deletingLastPathComponent()
+            if let at = whereFrom[directory] {
+                runs[at].append(item)
+            } else {
+                whereFrom[directory] = runs.count
+                runs.append([item])
+            }
+        }
+        return runs
     }
 
     /// True when macOS recognises the file as something with a moving

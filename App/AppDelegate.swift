@@ -61,12 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "titleRepeatMinutes":        5,
         "photosEnabled":             true,
         "photoSeconds":              8,
-        "kenBurnsEnabled":           true,
         // Not in Settings: how far a photo zooms over its time on screen, and
         // with it how far it pans. A knob rather than a control because the
         // right amount is a matter of taste on one's own photos, and the default
         // is the one that reads as a camera move rather than as drift.
-        "kenBurnsZoom":              VideoStage.defaultKenBurnsZoom,
     ]
 
     private var idleThresholdSeconds: Double {

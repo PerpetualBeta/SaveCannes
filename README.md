@@ -45,7 +45,7 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 - **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
-- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. Each is held for a few seconds and slowly panned and zoomed, with both the movement and the crop aimed at whatever the picture is actually of. See **Photos** below.
+- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. A folder of them isn't a slideshow: each arrives as a paper print thrown onto a desk, landing on the pile the last one left — and where a print is supposed to be still, the picture inside it drifts in and out of focus, carries a shake that isn't there, and comes apart into static and blocks. See **Photos** below.
 - **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
 - **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
 - **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
@@ -110,36 +110,79 @@ Removing a source is the minus button beside it. Nothing is ever moved or altere
 
 ### Photos
 
-Photos in a source folder join the playlist alongside the videos, in the same order, and each is held for a few seconds before the next thing plays.
+Photos in a source folder join the playlist alongside the videos, and each is held for a few seconds before the next lands. A folder of them is shown as a desk with the prints piling up on it — see below.
 
 - **Any image type macOS recognises** counts — JPEG, PNG, HEIC, TIFF, camera RAW. Rather than a list of extensions, the file's actual type is asked of the system, so a format added to macOS in future works without a change here. PDFs and SVGs aren't images by that test, and aren't played.
 - **Orientation is honoured.** A phone photo with an EXIF rotation tag is shown upright rather than on its side.
 - **The photo's own title** is used for the on-screen caption when its IPTC or TIFF fields carry one, and its copyright line likewise. Otherwise the filename, exactly as for a video.
 - **Turn photos off** if your film folders have cover art or downloaded posters in them that you'd rather not see as slides. A file you picked by hand is always played whichever kind it is — you chose that exact file.
 
-#### Pan and zoom (Ken Burns)
+#### A desk, not a slideshow
 
-On by default: each photo drifts slowly across the screen, zooming in or out. The pan is derived from the zoom rather than set separately, so it can never move far enough to drag an edge of the photo into frame.
+A folder of photographs isn't shown as a slideshow. Each one arrives as a **paper print
+with a white border, thrown down onto a desk**, landing on top of whatever is already
+lying there — so what builds up over a few minutes is a pile, and the collection is the
+thing you're watching rather than any single picture in it.
 
-**The movement is aimed at the subject.** Before a photo goes up, macOS's Vision framework is asked which part of it a person would look at, and the move ends with that part in the middle of the screen — so the camera pushes in *towards* the boat, or the face, or the lit ridge, rather than in a direction picked out of a hat. The distance travelled is the same for every photo; only the direction comes from the picture, because a pan whose speed depended on where the subject happened to sit would read as a fault rather than as a composition. A photo with nothing in particular in it, or one whose subject is already dead centre, gets a straight push-in.
+And then the trick. **The paper is dead still, and the picture inside it is not.** A print
+that has landed never moves again — but the image in its window drifts in and out of
+focus, carries the shake of a hand that isn't there, and every so often comes apart into
+blocks, or static, or a mess of compression, and puts itself back together. Prints are not
+supposed to do that, which is the point.
 
-**The crop is aimed too**, which matters more than the pan does. A photo that isn't the shape of your display has to lose something, and losing the middle of it is only right by accident — a portrait photo on a wide display is otherwise cropped to a band across its centre whether the subject is in that band or not. So where there is anything to spare, the photo is slid so the subject is in shot. A photo the same shape as the display has nothing to spare and is framed exactly as it always was.
+- **Only the newest print is alive.** As each new one comes down, the one it buries stops
+  moving and loses its colour, so the pile beneath is monochrome and the picture on top is
+  the only thing in the frame doing anything.
+- **Focus hunts rather than drifts** — it holds a distance, then racks quickly to another,
+  the way a lens does when it can't make up its mind. Where the photo *has* a subject, the
+  subject is held sharp and only the world behind it goes soft; where it hasn't, the whole
+  picture drifts together.
+- **The shake is a knock, not a sway.** Nothing happens for a second or two, then the
+  frame is jolted and settles. It shakes inside the paper's window: the print does not
+  move with it.
+- **Reduce Motion** in System Settings → Accessibility is honoured. Prints still land and
+  still pile up, because the collection is the point — but nothing shakes, hunts focus or
+  comes apart, and they arrive without the fall.
 
-Because a pan needs somewhere to move into, **a panning photo fills the display and ignores the Size setting** above — that setting is about fitting a film to a screen. Switch panning off and photos obey it exactly like videos do, letterboxed or at original size as you've asked. The aimed crop still applies at **Full screen, cropped**, panning or not.
+None of this is configurable, deliberately. It's what a folder of images does here.
 
-**Reduce Motion** in System Settings → Accessibility switches the movement off too, and photos fall back to the Size setting.
+**How the subject is found.** macOS's Vision framework will hand over a subject mask for
+very nearly any photograph, so its word alone isn't worth much. Instead the answer is
+built from things that don't depend on each other: whether the masked region really is
+nearer than the rest of the picture, whether its outline sits on a *step* in the depth
+rather than running through flat ground, whether the place a person would look falls
+inside it, and whether it's one compact thing rather than several scraps of scenery. All
+four have to agree. Measured across fourteen photographs, that accepted every one with a
+subject and rejected every one without — the single case it turns down that does contain a
+person is a figure occupying 0.4% of the frame, where holding it sharp would make no
+visible difference anyway.
 
-How far a photo zooms over its time on screen isn't in Settings, because the right amount is a matter of taste rather than a decision the app can make for you. The default reads as a camera move rather than as drift; if you want more or less of it:
+Depth comes from **Depth Anything V2 Small**, a Core ML model from Apple's own model
+library, used under the Apache 2.0 licence and shipped inside the app (about 18MB of it).
+Nothing is uploaded and nothing is asked of the network — the model runs on your Mac, on
+your photographs, and Save Cannes has no network access for anything but its own update
+check. On a Mac where the model can't be loaded, photographs still pile up on the desk and
+still shake and glitch; they just don't drift in and out of focus.
 
-```
-defaults write cc.jorviksoftware.SaveCannes kenBurnsZoom -float 1.15
-```
+#### Every photo in a folder, before the next film
 
-1.0 is no movement at all and 1.5 is the most it will accept — past that a photo that only just covers your screen starts to look soft. The pan travels further as the zoom grows, because the two come from the same number.
+A folder of photographs is a **collection**, and it only reads as one if the whole folder
+goes past before something else starts. So the images in a directory are kept together as a
+run: once the first of them comes up, the rest follow, and only then does the next film
+play.
+
+In **random** order the runs are shuffled and the images *within* each run are shuffled
+too — which gives full coverage without repeats, because a shuffle is a selection without
+replacement. Every image in the folder is shown exactly once before any of them comes
+round again. In **sequential** order it's the same grouping in path order.
+
+Grouped by the directory each image actually sits in, rather than by the source you added,
+because a source pointed at a photo library is usually a tree of albums — and it's the
+album that's the collection.
 
 ### Playback order
 
-- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice.
+- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice. A directory of photographs is shuffled as one unit and kept together — see **Every photo in a folder, before the next film** above.
 - **Sequential** — each source in turn, in the order they're listed, and each source's files in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
 
 ### Size on screen

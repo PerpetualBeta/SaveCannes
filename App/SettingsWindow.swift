@@ -28,7 +28,6 @@ struct SaveCannesSettingsContent: View {
     @AppStorage("differentVideoPerDisplay") private var differentVideoPerDisplay: Bool = true
     @AppStorage("photosEnabled")   private var photosEnabled: Bool = true
     @AppStorage("photoSeconds")    private var photoSeconds: Int = 8
-    @AppStorage("kenBurnsEnabled") private var kenBurnsEnabled: Bool = true
     @AppStorage("titleMode")          private var titleMode: TitleMode = .atStart
     @AppStorage("titleRepeatMinutes") private var titleRepeatMinutes: Int = 5
     @AppStorage("idleMinutes")    private var idleMinutes: Int = 5
@@ -247,8 +246,6 @@ struct SaveCannesSettingsContent: View {
             }
             .disabled(!photosEnabled)
 
-            Toggle(L10n.string("settings.ken_burns", defaultValue: "Pan and zoom (Ken Burns)"),
-                   isOn: $kenBurnsEnabled)
                 .disabled(!photosEnabled)
             Text(L10n.string("settings.ken_burns_note",
                              defaultValue: "A slow drift across each photo. Because a pan needs room to move into, a panning photo fills the display and ignores the Size setting above — switch this off to show photos at that size instead. Reduce Motion in System Settings turns the movement off too."))

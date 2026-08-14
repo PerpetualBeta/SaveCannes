@@ -44,19 +44,19 @@ final class VideoStage: NSView {
     /// honest place for it to come from, which is why it's a setting rather than
     /// a constant picked in here.
     var photoSeconds = 8
-    /// Whether a photo slowly pans and zooms while it's up.
-    var kenBurnsEnabled = true
-    /// How far a photo is zoomed by the end of its pan, which also sets how far
-    /// the pan can travel — see `photoZoom`.
-    var kenBurnsZoom = VideoStage.defaultKenBurnsZoom
 
     private let player = AVPlayer()
     private let playerLayer = AVPlayerLayer()
-    /// Where photos are drawn. A separate layer from the player's, rather than
-    /// reusing one surface, because the two are handed their content in
-    /// completely different ways and swapping between them is then just a
-    /// matter of which one is hidden.
-    private let stillLayer = CALayer()
+    /// Where photographs are shown: a desk, with the prints piling up on it.
+    ///
+    /// A separate surface from the player's, rather than reusing one, because the
+    /// two are handed their content in completely different ways and swapping
+    /// between them is then just a matter of which one is hidden.
+    private let desk = PhotoDesk()
+    /// Drives the desk. Owned here because a display link needs a view, and
+    /// because the desk must not be able to go on drawing once the stage has
+    /// finished with it.
+    private var deskLink: CADisplayLink?
     /// Advances off a photo. The video path is driven by the player reaching the
     /// end of its item; a still would sit there forever, so it gets a clock.
     private var stillTimer: Timer?
@@ -106,19 +106,13 @@ final class VideoStage: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
-        // A photo zoomed past 1.0 is a layer larger than this view; without this
-        // it would paint over the neighbouring display's window edge.
+        // Keeps every picture layer inside this display's window edge.
         layer?.masksToBounds = true
         playerLayer.player = player
         playerLayer.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(playerLayer)
-        stillLayer.backgroundColor = NSColor.black.cgColor
-        // Nearest-neighbour on a photo being slowly zoomed would crawl; the
-        // filters cost nothing on one static image per several seconds.
-        stillLayer.minificationFilter = .trilinear
-        stillLayer.magnificationFilter = .trilinear
-        stillLayer.isHidden = true
-        layer?.addSublayer(stillLayer)
+        desk.metalLayer.isHidden = true
+        layer?.addSublayer(desk.metalLayer)
         // Sized here, and again in `layout()`. An autoresizing mask alone
         // isn't enough: it only fires when the superview *changes* size, and
         // this view is created at its final size, so a subview added at
@@ -144,12 +138,13 @@ final class VideoStage: NSView {
         // Above the video, still behind the caption: the two picture layers are
         // never visible at once, so their order relative to each other is only
         // about keeping both of them under the text.
-        if stillLayer.superlayer === layer { layer.insertSublayer(stillLayer, at: 1) }
+        if desk.metalLayer.superlayer === layer { layer.insertSublayer(desk.metalLayer, at: 1) }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
     deinit {
+        deskLink?.invalidate()
         detachItem()
         titleTimer?.invalidate()
         watchdog?.invalidate()
@@ -164,6 +159,12 @@ final class VideoStage: NSView {
     func start() {
         running = true
         player.isMuted = !soundEnabled
+        // Loading the depth model costs about a second, once per launch. Doing it now,
+        // off the main thread, means the first photograph doesn't wait for it — and if
+        // this activation turns out to be all films, nothing has been lost but the read.
+        if VideoLibrary.photosEnabled {
+            Task.detached(priority: .utility) { _ = PhotoDepth.shared.isAvailable }
+        }
         playNext()
     }
 
@@ -209,13 +210,14 @@ final class VideoStage: NSView {
     // MARK: - Playlist walk
 
     private func refill() {
-        let all = sharedPlaylist ?? VideoLibrary.orderedPlaylist(order)
+        // The offset is applied by `orderedPlaylist`, in runs rather than in files: a
+        // display that began partway through a directory of stills would break the run
+        // that keeps that directory together. A mirrored list is taken exactly as
+        // handed over — every display is meant to be showing the same thing, and its
+        // offset is zero for that reason.
+        let all = sharedPlaylist ?? VideoLibrary.orderedPlaylist(order, startingAtRun: startOffset)
         candidatesInSource = all.count
-        // Rotating rather than slicing means a stage that starts at file 3
-        // still plays 1 and 2 afterwards — every display sees the whole
-        // library, just from a different point in it.
-        queue = all.isEmpty ? [] : Array(all[(startOffset % all.count)...]
-                                       + all[..<(startOffset % all.count)])
+        queue = all
         scLog("playlist: \(all.count) video(s), order=\(order == .random ? "random" : "sequential")"
               + (sharedPlaylist == nil ? "" : ", shared")
               + (startOffset == 0 ? "" : ", from #\(startOffset + 1)"))
@@ -329,99 +331,80 @@ final class VideoStage: NSView {
 
     // MARK: - Stills
 
-    /// How far a photo is zoomed by the end of its pan, unless the user says
-    /// otherwise.
-    ///
-    /// This also sets the pan budget. At 1.08 there is 4% of overscan on each
-    /// side, and `panBudgetFraction` spends part of that — so the pan can never
-    /// drag an edge of the photo into frame. Every Ken Burns bug is a pan that
-    /// outran its zoom, so the two are derived from one number rather than
-    /// chosen independently.
-    static let defaultKenBurnsZoom: CGFloat = 1.08
-    /// What a stored zoom is allowed to be.
-    ///
-    /// Below 1 there is no overscan to pan into and the photo would come away
-    /// from the edges of the display; the top of the range is where the decode
-    /// starts costing more than twice the pixels the display can show, and where
-    /// a photo that only just covered the screen begins to look soft.
-    static let kenBurnsZoomRange: ClosedRange<CGFloat> = 1...1.5
-    /// How much of the available overscan a pan may spend. Short of all of it so
-    /// rounding can't put an edge exactly on the boundary.
-    private static let panBudgetFraction: CGFloat = 0.75
     /// Bounds for a stored photo duration, in seconds. Same instinct as the
     /// clamp on `titleRepeatMinutes`: a value that arrived from disk shouldn't
     /// be able to freeze the playlist on one image or flicker through it.
     private static let photoSecondsRange: ClosedRange<Double> = 2...600
 
-    /// Whether photos are being panned right now.
+    /// Put one photograph onto the desk, or skip to the next candidate.
     ///
-    /// Not simply the setting: Reduce Motion turns the movement off, and the
-    /// answer decides how a photo is *laid out* as well as whether it animates.
-    /// A panning photo fills the display, because a pan needs overscan to move
-    /// into — so with the effect on, photos ignore the Size setting above, which
-    /// is about fitting a film to the screen. With it off they obey it.
-    private var panningPhotos: Bool {
-        kenBurnsEnabled && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    }
-
-    /// The zoom actually used, clamped once here so every reader of it — the
-    /// decode size and the animation both — is working from a value that can't
-    /// pull the photo away from the edges of the display.
-    private var photoZoom: CGFloat {
-        min(max(kenBurnsZoom, Self.kenBurnsZoomRange.lowerBound),
-            Self.kenBurnsZoomRange.upperBound)
-    }
-
-    /// Put one photo on screen, or skip to the next candidate.
+    /// A run of photographs is one continuous desk: each print lands on the pile the
+    /// one before it left, and the desk is only cleared when a film comes up. That is
+    /// what makes a folder of images read as a collection rather than a slideshow.
     @MainActor
     private func presentStill(_ url: URL) async {
+        guard desk.isUsable else {
+            skip(url, because: "this display has no Metal device for the desk")
+            return
+        }
         let scale = window?.backingScaleFactor ?? window?.screen?.backingScaleFactor ?? 1
-        // Decode no larger than this display can use, zoom included. A 60
-        // megapixel photo at full size costs hundreds of megabytes per display
-        // and buys nothing — the screen cannot show it.
-        let target = CGSize(width: bounds.width * scale * photoZoom,
-                            height: bounds.height * scale * photoZoom)
-        let decoded = await Task.detached(priority: .userInitiated) {
-            Self.decode(url, covering: target)
+        let points = bounds.size
+        let seed = desk.nextSeed()
+        // Read, measured and built into a print all on one background pass. Vision's
+        // subject mask, the depth model and the print's focus stack together cost a
+        // couple of hundred milliseconds, and none of it belongs on the main thread.
+        let prepared = await Task.detached(priority: .userInitiated) {
+            Self.prepare(url, points: points, scale: scale, seed: seed)
         }.value
-        // The saver may have been dismissed while the photo was being read.
+        // The saver may have been dismissed while the photograph was being read.
         guard running else { return }
-        guard let decoded = decoded else {
+        guard let prepared = prepared else {
             skip(url, because: "could not be decoded")
             return
         }
 
         hideNotice()
-        // A still and a film are never up at once, and the player is emptied
-        // rather than paused so a photo interlude doesn't hold a decoder open.
+        // The desk and a film are never up at once, and the player is emptied rather
+        // than paused so a photo interlude doesn't hold a decoder open.
         detachItem()
         player.replaceCurrentItem(with: nil)
         playerLayer.isHidden = true
-        currentStill = (url, decoded.image)
-        currentFocus = decoded.focus
-        currentPixelSize = CGSize(width: decoded.image.width, height: decoded.image.height)
-        stillLayer.isHidden = false
-        // No implicit animation on the swap. CALayer cross-fades a `contents`
-        // change by default, and a fade fighting the Ken Burns transform of the
-        // photo underneath reads as a glitch rather than a transition.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        stillLayer.contents = decoded.image
-        layoutStillLayer()
-        CATransaction.commit()
-        startKenBurns()
-        // It decoded, so the source is alive — the same thing `readyToPlay`
-        // proves for a video.
+        currentStill = (url, prepared.image)
+        currentFocus = prepared.focus
+        currentPixelSize = CGSize(width: prepared.image.width, height: prepared.image.height)
+        if desk.isEmpty { desk.begin() }
+        desk.metalLayer.isHidden = false
+        desk.drop(prepared.print)
+        startDeskLink()
+        // It decoded, so the source is alive — the same thing `readyToPlay` proves for
+        // a video.
         failuresSinceLastSuccess = 0
-        scLog("showing \(url.lastPathComponent) (\(decoded.image.width)×\(decoded.image.height)) for \(photoSeconds)s"
-              + (panningPhotos ? ", panning" : "")
-              + (decoded.focus.map {
-                  String(format: ", focus %.2f,%.2f", $0.point.x, $0.point.y)
-              } ?? ", no focus found"))
-        currentCaption = (decoded.title, decoded.copyright)
+        scLog("desk: \(url.lastPathComponent) (\(prepared.image.width)×\(prepared.image.height)) for \(photoSeconds)s"
+              + (prepared.print.hasSubject ? ", subject held sharp" : ", no subject")
+              + (prepared.print.hasDepth ? "" : ", no depth"))
+        currentCaption = (prepared.title, prepared.copyright)
         showCaption()
         startTitleTimer()
         startStillTimer()
+    }
+
+    /// Start, or keep, the clock that draws the desk. One display link per stage,
+    /// running only while there is a desk to draw.
+    private func startDeskLink() {
+        guard deskLink == nil else { return }
+        let link = displayLink(target: self, selector: #selector(drawDesk))
+        link.add(to: .main, forMode: .common)
+        deskLink = link
+    }
+
+    private func stopDeskLink() {
+        deskLink?.invalidate()
+        deskLink = nil
+    }
+
+    @objc private func drawDesk() {
+        let scale = window?.backingScaleFactor ?? window?.screen?.backingScaleFactor ?? 1
+        desk.render(points: bounds.size, scale: scale)
     }
 
     /// A photo has no end of its own to play to, so it gets a clock. One-shot,
@@ -440,58 +423,55 @@ final class VideoStage: NSView {
         stillTimer = nil
     }
 
-    /// Hand the display back to the player.
+    /// Hand the display back to the player, and give the desk back with it — a run of
+    /// photographs is over the moment a film starts, and nothing it was holding should
+    /// survive the hours a film plays.
     private func clearStill() {
-        stillLayer.removeAnimation(forKey: Self.kenBurnsKey)
-        stillLayer.transform = CATransform3DIdentity
-        stillLayer.contents = nil
-        stillLayer.isHidden = true
+        stopDeskLink()
+        desk.end()
+        desk.metalLayer.isHidden = true
         currentStill = nil
         currentFocus = nil
         playerLayer.isHidden = false
     }
 
-    private static let kenBurnsKey = "kenBurns"
-
-    /// The slow pan and zoom, for as long as the photo is up.
+    /// One photograph, read, measured and built into a print, ready to be dropped.
     ///
-    /// Held at its end state (`fillMode`, `isRemovedOnCompletion`) rather than
-    /// snapping back: the photo is still on screen when the animation ends if
-    /// the duration and the timer ever disagree by a frame.
-    private func startKenBurns() {
-        stillLayer.removeAnimation(forKey: Self.kenBurnsKey)
-        stillLayer.transform = CATransform3DIdentity
-        guard panningPhotos else { return }
+    /// `@unchecked Sendable` for the same reason `DecodedStill` is: it crosses back
+    /// from a background pass, and neither `CGImage` nor a print's Metal textures are
+    /// marked sendable although both are only ever touched from one thread at a time.
+    private struct PreparedPhoto: @unchecked Sendable {
+        let image: CGImage
+        let title: String
+        let copyright: String?
+        let focus: PhotoFocus?
+        let print: PhotoPrint
+    }
 
-        let zoom = photoZoom
-        // Where the zoomed end of the move sits: aimed at what Vision found, or
-        // in a random direction when it found nothing — which also keeps the
-        // same photo coming round again from moving identically every time.
-        let offset = PhotoFraming.panTranslation(
-            layerFrame: stillLayer.frame, in: bounds, zoom: zoom,
-            budgetFraction: Self.panBudgetFraction, focus: currentFocus,
-            fallbackAngle: .random(in: 0..<(2 * .pi)))
-        let zoomed = CATransform3DConcat(
-            CATransform3DMakeScale(zoom, zoom, 1),
-            CATransform3DMakeTranslation(offset.x, offset.y, 0))
-        // Half of them zoom out rather than in, so a run of photos doesn't feel
-        // like one repeated camera move.
-        let inward = Bool.random()
-
-        let move = CABasicAnimation(keyPath: "transform")
-        // The pan starts from the unzoomed state, where there is no overscan and
-        // therefore no offset — the offset only exists in the zoomed state, so
-        // the photo covers the display throughout either direction of travel.
-        move.fromValue = inward ? CATransform3DIdentity : zoomed
-        move.toValue = inward ? zoomed : CATransform3DIdentity
-        move.duration = min(max(Double(photoSeconds), Self.photoSecondsRange.lowerBound),
-                            Self.photoSecondsRange.upperBound)
-        // Linear: a steady drift. Easing makes the move look like it stalls at
-        // each end, which on a screensaver reads as a stutter.
-        move.timingFunction = CAMediaTimingFunction(name: .linear)
-        move.fillMode = .forwards
-        move.isRemovedOnCompletion = false
-        stillLayer.add(move, forKey: Self.kenBurnsKey)
+    /// Everything a photograph needs before it can land, on one background pass.
+    ///
+    /// Reading it, measuring its subject and its depth, and building its focus stack
+    /// are all expensive — a couple of hundred milliseconds together — and all of it
+    /// can be done away from the main thread, so all of it is.
+    nonisolated private static func prepare(_ url: URL, points: CGSize, scale: CGFloat,
+                                            seed: UInt32) -> PreparedPhoto? {
+        // Decode no larger than this display can use. A 60 megapixel photograph at full
+        // size costs hundreds of megabytes per display and buys nothing — the screen
+        // cannot show it, and a print shows less of the screen than that.
+        let target = CGSize(width: max(1, points.width * scale),
+                            height: max(1, points.height * scale))
+        guard let decoded = decode(url, covering: target) else { return nil }
+        let analysis = PhotoAnalysis.measure(decoded.image, attention: decoded.focus)
+        let placement = DeskGPU.place(
+            imageSize: CGSize(width: decoded.image.width, height: decoded.image.height),
+            seed: seed, in: target)
+        guard let gpu = DeskGPU.shared,
+              let print = gpu.makePrint(image: decoded.image, analysis: analysis,
+                                        seed: seed, placement: placement)
+        else { return nil }
+        return PreparedPhoto(image: decoded.image, title: decoded.title,
+                             copyright: decoded.copyright, focus: decoded.focus,
+                             print: print)
     }
 
     /// One photo, decoded and captioned. `@unchecked Sendable` because it
@@ -824,7 +804,7 @@ final class VideoStage: NSView {
     override func layout() {
         super.layout()
         layoutPlayerLayer()
-        layoutStillLayer()
+        desk.metalLayer.frame = bounds
         layoutNotice()
         overlay.frame = bounds
     }
@@ -841,47 +821,6 @@ final class VideoStage: NSView {
             playerLayer.videoGravity = .resizeAspect
             playerLayer.frame = originalSizeFrame()
         }
-    }
-
-    /// Where the photo sits. A panning photo fills the display whatever the
-    /// Size setting says — see `panningPhotos` — because a pan has to have
-    /// overscan to move into. Otherwise a photo is fitted exactly like a film.
-    private func layoutStillLayer() {
-        guard let still = currentStill else { return }
-        guard !panningPhotos else {
-            fillWithPhoto(still.image)
-            return
-        }
-        switch scaling {
-        case .fullScreen:
-            fillWithPhoto(still.image)
-        case .fitToScreen:
-            stillLayer.contentsGravity = .resizeAspect
-            stillLayer.frame = bounds
-        case .originalSize:
-            stillLayer.contentsGravity = .resizeAspect
-            stillLayer.frame = originalSizeFrame()
-        }
-    }
-
-    /// Fill the display with the photo, aimed at its focus point.
-    ///
-    /// The layer is given the whole photo at covering scale rather than being
-    /// pinned to `bounds` with aspect-fill doing the cropping: the crop is then
-    /// this code's decision rather than a side effect of where the middle of the
-    /// photo happens to be, which is what lets it be aimed. The overhang is
-    /// clipped by the view — see `masksToBounds` in `init`.
-    ///
-    /// `resizeAspectFill` rather than `resizeAspect` inside that frame even
-    /// though the frame is built from the photo's own aspect ratio: the two are
-    /// identical to within rounding, and this is the one of them that answers a
-    /// half-pixel disagreement by overfilling instead of by showing a hairline
-    /// of black.
-    private func fillWithPhoto(_ image: CGImage) {
-        stillLayer.contentsGravity = .resizeAspectFill
-        stillLayer.frame = PhotoFraming.fillFrame(
-            imageSize: CGSize(width: image.width, height: image.height),
-            in: bounds, focus: currentFocus)
     }
 
     /// One video pixel per screen pixel, centred on black.
