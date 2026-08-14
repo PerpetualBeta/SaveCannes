@@ -58,7 +58,7 @@ Click the menu bar icon → **Settings…** for:
 - **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
 - **Playback** — order, and sound
 - **Display** — how each video is fitted to the screen, and whether every display shows the same one
-- **Photos** — whether photos play, how long each is held, and whether they pan and zoom
+- **Photos** — whether photos play, and how long each is held
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, and a global "Play now" hotkey
 - **On dismiss** — toggle to lock the screen automatically when the saver dismisses
@@ -204,7 +204,7 @@ Displays showing the same video are started together but aren't frame-locked: se
 
 ### Sound
 
-Off by default — a screensaver that starts talking to an empty room is nobody's friend. Turn it on in Settings → Video.
+Off by default — a screensaver that starts talking to an empty room is nobody's friend. Turn it on in Settings → Playback.
 
 With more than one display, sound plays on the main display only. Each display runs its own playback, so sound on all of them would mean the same soundtrack two or three times over, a few frames apart.
 
@@ -267,15 +267,25 @@ Playback is `AVPlayer` into an `AVPlayerLayer`, one per display, walking a playl
 
 "Screensaver delivered as a regular `.app`" is the default shape for Jorvik screensavers, established by [Rainy Day](https://jorviksoftware.cc/screensavers/rainyday) and followed by [ASCII Saver](https://jorviksoftware.cc/screensavers/asciisaver).
 
-## Building from source
+## Building from Source
 
-Save Cannes builds via the shared Jorvik `release.mk`. With the `jorvik-release` sibling repo cloned alongside it and [GNU Make](https://formulae.brew.sh/formula/make) 4 installed:
+The build is driven by the shared [`release.mk`](https://github.com/PerpetualBeta/jorvik-release) Make include, so `jorvik-release` has to be checked out **beside this repo** — the Makefile looks for it at `../jorvik-release/`. macOS ships GNU Make 3.81 as `make`, which is too old, so `gmake` comes from [Homebrew](https://brew.sh).
 
-- Clone the repo: `git clone https://github.com/PerpetualBeta/SaveCannes.git`
-- Local build (signed with the Jorvik Developer ID): `gmake dev-build`
-- Run the freshly-built copy: `gmake run`
-- Regenerate the app icon: `gmake icon`
-- Signed, notarised, stapled `.zip` and `.pkg` ready to ship: `gmake release`
+```bash
+brew install make   # GNU Make 4+, if you do not already have gmake
+git clone https://github.com/PerpetualBeta/jorvik-release.git
+git clone https://github.com/PerpetualBeta/SaveCannes.git
+cd SaveCannes
+gmake build
+open ".build/Save Cannes.app"
+```
+
+Other targets:
+
+- `gmake dev-build` — local build signed with the Jorvik Developer ID
+- `gmake run` — run the freshly-built copy
+- `gmake icon` — regenerate the app icon from `generate_icon.swift`
+- `gmake release` — signed, notarised, stapled `.zip` and `.pkg` ready to ship
 
 ## The other Jorvik screensavers
 
@@ -285,7 +295,7 @@ Save Cannes builds via the shared Jorvik `release.mk`. With the `jorvik-release`
 
 ## Troubleshooting
 
-**Nothing plays, and the screen says "No video source chosen".** Open Settings → Video and choose a file or folder.
+**Nothing plays, and the screen says "No video source chosen".** Open Settings → Sources and add a folder, a file or a stream.
 
 **A stream won't play.** Paste the URL into Safari or QuickTime Player — if they can't play it either, it isn't a media URL, and Save Cannes hands URLs to the same underlying player. A page that *shows* a video is not the same as the video's own address.
 
@@ -297,7 +307,7 @@ Save Cannes builds via the shared Jorvik `release.mk`. With the `jorvik-release`
 
 **The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
 
-**No sound.** Check Settings → Video, and note that with multiple displays the soundtrack plays on the main display's copy only.
+**No sound.** Check Settings → Playback, and note that with multiple displays the soundtrack plays on the main display's copy only.
 
 **A video seems to end early.** Turn logging on and look for `watchdog:` lines — the watchdog only moves on when the playhead has genuinely stopped, and it names the moment it did. If there are no such lines, the file ended where it says it ends; check its duration in Finder's Get Info.
 
