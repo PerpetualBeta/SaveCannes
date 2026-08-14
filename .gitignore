@@ -6,3 +6,6 @@ Resources/SaveCannes.iconset/
 *.swiftdoc
 *.dSYM
 Installer/_pkg_staging/
+
+# Claude Code session scratch (worktrees, local state)
+.claude/
