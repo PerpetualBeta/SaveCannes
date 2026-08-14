@@ -44,17 +44,15 @@ struct SaveCannesSettingsContent: View {
     /// The stream field's contents, and whether what's in it can be played.
     @State private var newURL: String = ""
 
-    /// AXIsProcessTrusted flips immediately after the user grants access in
-    /// System Settings, but SwiftUI doesn't see the change without a redraw
-    /// trigger. Re-poll when the view appears.
-    @State private var accessibilityGranted: Bool = AXIsProcessTrusted()
+    /// Watches whether this build is trusted for Accessibility.
+    @StateObject private var accessibility = AccessibilityWatcher()
 
     var body: some View {
         Section(L10n.string("settings.permissions", defaultValue: "Permissions")) {
             HStack {
                 Text(L10n.string("settings.accessibility", defaultValue: "Accessibility"))
                 Spacer()
-                if accessibilityGranted {
+                if accessibility.trusted {
                     Label(L10n.string("settings.granted", defaultValue: "Granted"),
                           systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
@@ -298,7 +296,7 @@ struct SaveCannesSettingsContent: View {
                 .foregroundStyle(.secondary)
         }
         .onAppear {
-            accessibilityGranted = AXIsProcessTrusted()
+            accessibility.reread(how: "opening Settings", evenIfUnchanged: true)
             recount()
         }
     }

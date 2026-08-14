@@ -91,6 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
         installEditMenu()
         scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s")
+        // Whether this process is trusted, recorded at launch. Worth having: the answer
+        // is per *process*, not just per app, and a process that has had the permission
+        // revoked under it cannot regain it — so "the switch is on but the app disagrees"
+        // is answered by comparing this line against when the app was started.
+        scLog("accessibility at launch: " + (AXIsProcessTrusted() ? "granted" : "NOT granted"))
         registerAtLoginIfNeeded()
         // Touch the lazy property so the updater starts and begins its
         // scheduled-check timer.

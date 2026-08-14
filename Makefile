@@ -38,7 +38,7 @@ SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift \
                     App/PhotoDeskSurface.swift \
                     App/TitleOverlay.swift \
                     App/StatusItem.swift App/SettingsWindow.swift \
-                    App/HotkeyManager.swift \
+                    App/HotkeyManager.swift App/AccessibilityWatcher.swift \
                     App/LockScreen.swift App/Screenshot.swift \
                     App/Log.swift \
                     $(wildcard App/JorvikKit/*.swift)
