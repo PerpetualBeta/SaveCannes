@@ -63,6 +63,8 @@ struct JorvikSettingsView<AppSettings: View>: View {
 
     static func showWindow(appName: String, @ViewBuilder appSettings: @escaping () -> AppSettings) {
         if let window = JorvikSettingsWindowCache.existingWindow {
+            // Sized for whichever display it last appeared on, which may not be this one.
+            JorvikSettingsWindowCache.sizer?.clamp()
             // If the cached window is hidden, bring it to the active space so
             // the user isn't yanked to wherever it was last shown. If it's
             // still visible on another space, leave default behavior — macOS
@@ -102,18 +104,9 @@ struct JorvikSettingsView<AppSettings: View>: View {
         // chrome is added on top, so the title bar comes out of the budget or it
         // is spent twice. (A titled window adds no width, hence height only.)
         let style: NSWindow.StyleMask = [.titled, .closable]
-        let chromeHeight = NSWindow.frameRect(forContentRect: .zero, styleMask: style).height
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        let visible = screen?.visibleFrame.size ?? JorvikSettingsMetrics.assumedScreenSize
-        let floor = JorvikSettingsMetrics.minContentSize
-        let fraction = JorvikSettingsMetrics.maxDisplayFraction
-        // `max(..., floor)` on each ceiling so a display too small for the floor
-        // yields the floor rather than an inverted range.
-        let ceilingWidth = max(visible.width * fraction, floor.width)
-        let ceilingHeight = max(visible.height * fraction - chromeHeight, floor.height)
-        let size = NSSize(width: min(max(fittingSize.width, floor.width), ceilingWidth),
-                          height: min(max(fittingSize.height, floor.height), ceilingHeight))
+        let size = JorvikSettingsMetrics.contentSize(fitting: fittingSize, on: screen, style: style)
 
         let window = NSWindow(contentViewController: controller)
         window.title = L10n.format("settings.title_format", defaultValue: "%@ Settings", appName)
@@ -130,6 +123,11 @@ struct JorvikSettingsView<AppSettings: View>: View {
         NSApp.activate(ignoringOtherApps: true)
         scrollToTop(controller.view, in: window)
         JorvikSettingsWindowCache.existingWindow = window
+        // The cap has to survive the display changing under it. A window sized for a
+        // 27-inch panel is taller than a laptop screen, and a user who switches to the
+        // built-in display then cannot reach the bottom of the form — the window is off
+        // the screen and there is nothing to drag it back by.
+        JorvikSettingsWindowCache.sizer = JorvikSettingsWindowSizer(window: window)
     }
 }
 
@@ -138,6 +136,61 @@ struct JorvikSettingsView<AppSettings: View>: View {
 /// static stored properties inside generic types — so the cache sits here.
 private enum JorvikSettingsWindowCache {
     static var existingWindow: NSWindow?
+    /// Keeps the window inside whatever display it finds itself on. Held here because it
+    /// has to outlive `showWindow`, exactly as the window itself does.
+    static var sizer: JorvikSettingsWindowSizer?
+}
+
+/// Holds a settings window to the display cap after the display has changed.
+///
+/// The cap is applied when the window is built, against the screen it is about to appear
+/// on — and then the world moves: the user switches from an external panel to the built-in
+/// one, unplugs a display, or drags the window somewhere smaller. A window that was 80% of
+/// a 1440-tall screen is *taller than* a 1080-tall one, and once its bottom edge is off the
+/// screen the form cannot be scrolled to the end and the window cannot be dragged up,
+/// because macOS pins the title bar below the menu bar.
+///
+/// So the same arithmetic is re-applied on the two events that can invalidate it, and when
+/// a cached window is shown again.
+final class JorvikSettingsWindowSizer: NSObject {
+
+    private weak var window: NSWindow?
+
+    init(window: NSWindow) {
+        self.window = window
+        super.init()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(displaysChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(displaysChanged),
+            name: NSWindow.didChangeScreenNotification, object: window)
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func displaysChanged() {
+        // A beat late on purpose: at the moment the notification arrives the window may not
+        // yet have been moved onto the surviving display, so measuring now would measure
+        // the screen it is leaving.
+        DispatchQueue.main.async { [weak self] in self?.clamp() }
+    }
+
+    /// Bring the window back inside the current display's cap, and back on screen.
+    func clamp() {
+        guard let window, let screen = window.screen ?? NSScreen.main else { return }
+        let fitting = window.contentViewController?.view.fittingSize ?? window.frame.size
+        let capped = JorvikSettingsMetrics.contentSize(fitting: fitting, on: screen,
+                                                      style: window.styleMask)
+        if window.contentView?.frame.size != capped { window.setContentSize(capped) }
+        // Sizing alone is not enough: a window whose top-left stayed put can still hang off
+        // the bottom. Nudge it back inside the visible area.
+        var frame = window.frame
+        let visible = screen.visibleFrame
+        frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+        frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+        if frame != window.frame { window.setFrame(frame, display: true) }
+    }
 }
 
 private extension JorvikSettingsView {
@@ -207,6 +260,26 @@ private enum JorvikSettingsMetrics {
     /// Fallback when there is no screen to measure — vanishingly unlikely, and a
     /// plausible small display beats a zero-size window.
     static let assumedScreenSize = NSSize(width: 1200, height: 900)
+
+    /// The content size a settings window should have on a given screen: the form's own
+    /// fitting size, floored so a tiny form still gets a window worth looking at, and
+    /// capped at `maxDisplayFraction` of the display.
+    ///
+    /// The height budget pays for the title bar too — `setContentSize` takes a *content*
+    /// height and the chrome is added on top, so the title bar comes out of the budget or
+    /// it is spent twice. (A titled window adds no width, hence height only.)
+    static func contentSize(fitting: NSSize, on screen: NSScreen?,
+                           style: NSWindow.StyleMask) -> NSSize {
+        let chromeHeight = NSWindow.frameRect(forContentRect: .zero, styleMask: style).height
+        let visible = screen?.visibleFrame.size ?? assumedScreenSize
+        // `max(..., floor)` on each ceiling so a display too small for the floor yields the
+        // floor rather than an inverted range.
+        let ceilingWidth = max(visible.width * maxDisplayFraction, minContentSize.width)
+        let ceilingHeight = max(visible.height * maxDisplayFraction - chromeHeight,
+                                minContentSize.height)
+        return NSSize(width: min(max(fitting.width, minContentSize.width), ceilingWidth),
+                      height: min(max(fitting.height, minContentSize.height), ceilingHeight))
+    }
 
     /// When to re-assert the form's scroll position after the window is shown.
     /// See `JorvikSettingsView.scrollToTop` for why this is a window and not a
