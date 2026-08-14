@@ -44,23 +44,23 @@ struct SaveCannesSettingsContent: View {
     /// The stream field's contents, and whether what's in it can be played.
     @State private var newURL: String = ""
 
-    /// Watches whether this build is trusted for Accessibility.
-    @StateObject private var accessibility = AccessibilityWatcher()
+    /// Watches whether this build is trusted for Accessibility. Shared with the rest of
+    /// the suite — see `JorvikPermissionWatcher`, which carries the reasoning.
+    @StateObject private var accessibility = JorvikPermissionWatcher.accessibility()
 
     var body: some View {
         Section(L10n.string("settings.permissions", defaultValue: "Permissions")) {
             HStack {
                 Text(L10n.string("settings.accessibility", defaultValue: "Accessibility"))
                 Spacer()
-                if accessibility.trusted {
+                if accessibility.isGranted {
                     Label(L10n.string("settings.granted", defaultValue: "Granted"),
                           systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .font(.caption)
                 } else {
                     Button(L10n.string("settings.grant_access", defaultValue: "Grant Access")) {
-                        let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
-                        AXIsProcessTrustedWithOptions(opts)
+                        JorvikPermissionWatcher.promptForAccessibility()
                     }
                     .font(.caption)
                 }
@@ -296,7 +296,8 @@ struct SaveCannesSettingsContent: View {
                 .foregroundStyle(.secondary)
         }
         .onAppear {
-            accessibility.reread(how: "opening Settings", evenIfUnchanged: true)
+            scLog("settings opened; accessibility "
+                  + (AXIsProcessTrusted() ? "granted" : "NOT granted") + " for this build")
             recount()
         }
     }
