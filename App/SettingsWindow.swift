@@ -245,12 +245,6 @@ struct SaveCannesSettingsContent: View {
                 Spacer()
             }
             .disabled(!photosEnabled)
-
-                .disabled(!photosEnabled)
-            Text(L10n.string("settings.ken_burns_note",
-                             defaultValue: "A slow drift across each photo. Because a pan needs room to move into, a panning photo fills the display and ignores the Size setting above — switch this off to show photos at that size instead. Reduce Motion in System Settings turns the movement off too."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
 
         Section(L10n.string("settings.titles", defaultValue: "Titles")) {
