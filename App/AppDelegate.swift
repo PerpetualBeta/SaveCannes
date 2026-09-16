@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var idleTimer: Timer?
     private var windows: [ScreensaverWindow] = []
     private var screenChangeObserver: NSObjectProtocol?
+    /// Signature of the display layout the live windows were built for.
+    /// `nil` when no windows exist. See `handleScreenChange`.
+    private var builtForLayout: String?
     private var shortcutObserver: NSObjectProtocol?
     /// Earliest moment the idle-tick is allowed to dismiss after an
     /// activation. Activating via hotkey (or status-menu click) is itself
@@ -338,7 +341,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windows.append(win)
             win.activate()
         }
-        scLog("showed \(windows.count) screensaver window(s)")
+        builtForLayout = Self.screenLayoutSignature()
+        scLog("showed \(windows.count) screensaver window(s) for layout \(builtForLayout ?? "?")")
     }
 
     /// True between the first `dismissWindows(triggerLock:true)` call and the
@@ -415,12 +419,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows.removeAll()
         // Clear the re-entry guard so the next dismiss cycle can lock again.
         lockDismissInProgress = false
+        builtForLayout = nil
         scLog("dismissed screensaver windows")
     }
 
+    /// Fingerprint of the physical display layout — the only thing a
+    /// screensaver window is actually built from.
+    ///
+    /// Deliberately excludes `visibleFrame`. `visibleFrame` shrinks and
+    /// grows as the menu bar and Dock come and go, and a fullscreen window
+    /// at `.screenSaver` level covers the menu bar — so a signature that
+    /// included it would change as a *result* of showing our own window.
+    ///
+    /// Sorted by display ID so a reordering of `NSScreen.screens` with
+    /// unchanged geometry reads as no change. Frames are rounded to whole
+    /// points: display frames are integral in practice, and rounding
+    /// removes floating-point jitter from the comparison.
+    private static func screenLayoutSignature() -> String {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return NSScreen.screens.map { screen -> String in
+            let id = (screen.deviceDescription[key] as? NSNumber)?.uint32Value ?? 0
+            let f = screen.frame
+            return String(
+                format: "%u:%d,%d,%dx%d@%.1f",
+                id,
+                Int(f.origin.x.rounded()), Int(f.origin.y.rounded()),
+                Int(f.size.width.rounded()), Int(f.size.height.rounded()),
+                screen.backingScaleFactor)
+        }
+        .sorted()
+        .joined(separator: "|")
+    }
+
+    /// `NSApplication.didChangeScreenParametersNotification` does not mean
+    /// "a display was connected or disconnected". It fires for any change to
+    /// the screen configuration, and on macOS 27 it fires when nothing about
+    /// the display layout has changed at all.
+    ///
+    /// Measured on Rainy Day (26,611 show-to-rebuild samples, 2026-09-16) it
+    /// has two distinct phases, and conflating them sends you looking in the
+    /// wrong place:
+    ///
+    /// - **What starts it:** the first notification after a quiet activation
+    ///   arrives a median of **15.6s** after the window is shown (610
+    ///   samples). The cause is not identified. It did not reproduce in a
+    ///   hotkey-triggered session with the user present, so it may need a
+    ///   genuine idle activation.
+    /// - **What sustains it:** rebuilding re-posts the notification within a
+    ///   median of **5ms** (26,001 samples), because showing a window at
+    ///   `.screenSaver` level is itself a screen-configuration change. That
+    ///   runs away at ~30 rebuilds a second, 13,119 events in one day against
+    ///   a 4-300 baseline.
+    ///
+    /// The guard below handles both, because it refuses every notification
+    /// whose layout is unchanged regardless of what posted it. Here each
+    /// rebuild
+    /// rebuilds the playlist from the top, so the first video restarts
+    /// forever and the saver never advances to the second one.
+    ///
+    /// So rebuild only when the thing the windows depend on actually
+    /// differs. Showing a window does not move a display, so the signature
+    /// is unchanged and the loop stops at the first hop. A debounce would
+    /// not fix it: the self-posted notification just arrives later.
     private func handleScreenChange() {
         guard !windows.isEmpty else { return }
-        scLog("screen layout changed — recreating screensaver windows")
+        let current = Self.screenLayoutSignature()
+        guard current != builtForLayout else {
+            scLog("screen parameters changed but display layout is unchanged (\(current)) — not rebuilding")
+            return
+        }
+        scLog("display layout changed: \(builtForLayout ?? "none") → \(current) — recreating screensaver windows")
         dismissWindows(triggerLock: false)
         showWindows()
     }
