@@ -43,6 +43,10 @@ struct SaveCannesSettingsContent: View {
     @State private var counts: [UUID: VideoLibrary.Tally] = [:]
     /// The stream field's contents, and whether what's in it can be played.
     @State private var newURL: String = ""
+    /// Profiles are intentionally separate from sources. A source can be used
+    /// on more than one display, without making duplicate folder grants or
+    /// duplicate entries in the main Sources list.
+    @State private var displayProfiles: [DisplayProfile] = DisplayProfileStore.load()
 
     /// Watches whether this build is trusted for Accessibility. Shared with the rest of
     /// the suite — see `JorvikPermissionWatcher`, which carries the reasoning.
@@ -223,6 +227,51 @@ struct SaveCannesSettingsContent: View {
             Text(differentPerDisplayNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Divider()
+
+            Text("Per-display playback")
+                .font(.headline)
+            Text("Configure a connected display to give it its own sources and fitting mode. Displays left unconfigured use the settings above.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(connectedDisplays) { display in
+                if let index = displayProfiles.firstIndex(where: { $0.displayID == display.id }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(display.name)
+                            Spacer()
+                            Button("Use global settings") { removeProfile(at: index) }
+                                .font(.caption)
+                        }
+                        Picker("Size:", selection: scalingBinding(at: index)) {
+                            Text("Full screen, cropped to fit").tag(VideoScaling.fullScreen)
+                            Text("Fit to screen, no cropping").tag(VideoScaling.fitToScreen)
+                            Text("Original size").tag(VideoScaling.originalSize)
+                        }
+                        Text("Sources for this display:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(sources) { source in
+                            Toggle(source.displayName, isOn: sourceBinding(source.id, profileAt: index))
+                                .font(.caption)
+                        }
+                        if sources.isEmpty {
+                            Text("Add sources above, then return here to choose what this display plays.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    HStack {
+                        Text(display.name)
+                        Spacer()
+                        Button("Configure…") { addProfile(for: display.screen) }
+                    }
+                }
+            }
         }
 
         Section(L10n.string("settings.photos", defaultValue: "Photos")) {
@@ -320,6 +369,54 @@ struct SaveCannesSettingsContent: View {
                           defaultValue: "Each display gets its own shuffle. Turned off, every display plays the same video, started together. Nothing to choose on a single-display Mac.")
             : L10n.string("settings.different_per_display_sequential",
                           defaultValue: "Sequential order plays the same video on every display — in order means in order, everywhere.")
+    }
+
+    // MARK: - Per-display playback
+
+    private struct ConnectedDisplay: Identifiable {
+        let id: String
+        let name: String
+        let screen: NSScreen
+    }
+
+    private var connectedDisplays: [ConnectedDisplay] {
+        NSScreen.screens.map {
+            ConnectedDisplay(id: DisplayIdentity.id(for: $0), name: $0.localizedName, screen: $0)
+        }
+    }
+
+    private func addProfile(for screen: NSScreen) {
+        displayProfiles.append(DisplayProfile(screen: screen,
+                                              sourceIDs: Set(sources.map(\.id)),
+                                              scaling: scaling))
+        saveProfiles()
+    }
+
+    private func removeProfile(at index: Int) {
+        displayProfiles.remove(at: index)
+        saveProfiles()
+    }
+
+    private func saveProfiles() {
+        DisplayProfileStore.save(displayProfiles)
+    }
+
+    private func scalingBinding(at index: Int) -> Binding<VideoScaling> {
+        Binding(get: { displayProfiles[index].scaling }, set: {
+            displayProfiles[index].scaling = $0
+            saveProfiles()
+        })
+    }
+
+    private func sourceBinding(_ sourceID: UUID, profileAt index: Int) -> Binding<Bool> {
+        Binding(get: { displayProfiles[index].sourceIDs.contains(sourceID) }, set: { selected in
+            if selected {
+                displayProfiles[index].sourceIDs.insert(sourceID)
+            } else {
+                displayProfiles[index].sourceIDs.remove(sourceID)
+            }
+            saveProfiles()
+        })
     }
 
     // MARK: - Sources

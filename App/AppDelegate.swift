@@ -322,19 +322,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // would play the same soundtrack two or three times over, a few frames
         // apart — which sounds broken rather than loud.
         let audioScreen = NSScreen.screens.first
-        // Mirroring is the default: one list, ordered once here, handed to every
-        // stage, so they walk the identical sequence together. "Different video
-        // on each display" instead lets each stage build and shuffle its own —
-        // available in random order only, per
-        // `PlaybackOrder.allowsDifferentVideoPerDisplay`.
-        let mirrored = !differentVideoPerDisplay
+        let profiles = NSScreen.screens.map { DisplayProfileStore.profile(for: $0) }
+        // With no display profiles, preserve the original global playback
+        // rules: mirroring builds one playlist here and hands it to every
+        // stage, while "Different video on each display" lets every stage
+        // build its own random playlist.
+        //
+        // A per-display profile can choose both a different source set and a
+        // different scaling mode, so it cannot share that playlist with an
+        // arbitrary other display. Once any display is configured, every
+        // stage builds its own list: configured displays use their selected
+        // sources; unconfigured ones fall back to the global source list.
+        // This also keeps a newly connected display useful without requiring
+        // a profile before the saver can appear on it.
+        let hasProfiles = profiles.contains(where: { $0 != nil })
+        let mirrored = !hasProfiles && !differentVideoPerDisplay
         let shared = mirrored ? VideoLibrary.orderedPlaylist(playbackOrder) : nil
         for (index, screen) in NSScreen.screens.enumerated() {
+            let profile = profiles[index]
+            let configuredSources = profile.map { profile in
+                let ids = profile.sourceIDs
+                return VideoLibrary.sources.filter { ids.contains($0.id) }
+            }
+            let scaling = profile?.scaling
+                ?? VideoScaling(rawValue: UserDefaults.standard.integer(forKey: "videoScaling"))
+                ?? .fullScreen
             let win = ScreensaverWindow(
                 screen: screen,
                 audioEnabled: soundEnabled && screen == audioScreen,
                 sharedPlaylist: shared,
-                startOffset: mirrored ? 0 : index
+                sourcesOverride: configuredSources,
+                scaling: scaling,
+                startOffset: mirrored || playbackOrder == .sequential ? 0 : index
             ) { [weak self] in
                 self?.dismissWindows(triggerLock: self?.lockOnDismiss ?? false)
             }
