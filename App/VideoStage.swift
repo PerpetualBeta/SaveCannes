@@ -30,6 +30,10 @@ final class VideoStage: NSView {
     /// sequential order) keep them apart.
     var sharedPlaylist: [URL]?
 
+    /// A display profile's selected sources. nil preserves the global source
+    /// list; an empty array intentionally yields the usual empty-state notice.
+    var sourcesOverride: [VideoSource]?
+
     /// How far into the list this stage starts. Without it, "different video
     /// on each display" would be a lie in sequential order — every display
     /// would begin at the first file and play the same one.
@@ -215,7 +219,8 @@ final class VideoStage: NSView {
         // that keeps that directory together. A mirrored list is taken exactly as
         // handed over — every display is meant to be showing the same thing, and its
         // offset is zero for that reason.
-        let all = sharedPlaylist ?? VideoLibrary.orderedPlaylist(order, startingAtRun: startOffset)
+        let all = sharedPlaylist ?? VideoLibrary.orderedPlaylist(order, startingAtRun: startOffset,
+                                                                  sources: sourcesOverride)
         candidatesInSource = all.count
         queue = all
         scLog("playlist: \(all.count) video(s), order=\(order == .random ? "random" : "sequential")"

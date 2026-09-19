@@ -28,7 +28,7 @@ enum TitleMode: Int {
 }
 
 /// How each video is fitted to the display it plays on.
-enum VideoScaling: Int {
+enum VideoScaling: Int, Codable {
     /// Fill the display; overflow on the long axis is cropped away.
     case fullScreen = 0
     /// Whole frame visible, letterboxed or pillarboxed to fit.
@@ -64,8 +64,8 @@ enum VideoLibrary {
     ///
     /// Read fresh on every activation rather than cached, so adding or removing
     /// files takes effect the next time the saver comes up.
-    static func playlist() -> [URL] {
-        enabledSources.flatMap(items(in:))
+    static func playlist(sources: [VideoSource]? = nil) -> [URL] {
+        (sources ?? enabledSources).filter(\.isEnabled).flatMap(items(in:))
     }
 
     /// Whether photos join the playlist, read fresh so the setting applies to
@@ -154,8 +154,9 @@ enum VideoLibrary {
     ///   video on each display". Counted in runs rather than in files, because
     ///   starting a display halfway through a directory would break the very thing
     ///   the grouping exists to guarantee.
-    static func orderedPlaylist(_ order: PlaybackOrder, startingAtRun offset: Int = 0) -> [URL] {
-        var runs = runs(in: playlist())
+    static func orderedPlaylist(_ order: PlaybackOrder, startingAtRun offset: Int = 0,
+                                sources: [VideoSource]? = nil) -> [URL] {
+        var runs = runs(in: playlist(sources: sources))
         if order == .random {
             runs = runs.shuffled().map { $0.count > 1 ? $0.shuffled() : $0 }
         }

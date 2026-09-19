@@ -78,6 +78,8 @@ final class ScreensaverWindow {
     private var eventMonitor: Any?
     private let onDismiss: () -> Void
     private let sharedPlaylist: [URL]?
+    private let sourcesOverride: [VideoSource]?
+    private let scaling: VideoScaling
     private let startOffset: Int
     let screen: NSScreen
 
@@ -91,11 +93,15 @@ final class ScreensaverWindow {
     init(screen: NSScreen,
          audioEnabled: Bool,
          sharedPlaylist: [URL]?,
+         sourcesOverride: [VideoSource]?,
+         scaling: VideoScaling,
          startOffset: Int,
          onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
         self.screen = screen
         self.sharedPlaylist = sharedPlaylist
+        self.sourcesOverride = sourcesOverride
+        self.scaling = scaling
         self.startOffset = startOffset
         // NSWindow's screen: parameter interprets contentRect as RELATIVE to
         // that screen's origin — so passing screen.frame (already in global
@@ -136,9 +142,10 @@ final class ScreensaverWindow {
         // would read 0 by accident rather than by intent.
         let defs = UserDefaults.standard
         stage.order = PlaybackOrder(rawValue: defs.integer(forKey: "playbackOrder")) ?? .random
-        stage.scaling = VideoScaling(rawValue: defs.integer(forKey: "videoScaling")) ?? .fullScreen
+        stage.scaling = scaling
         stage.soundEnabled = audioEnabled
         stage.sharedPlaylist = sharedPlaylist
+        stage.sourcesOverride = sourcesOverride
         stage.startOffset = startOffset
         stage.titleMode = TitleMode(rawValue: defs.integer(forKey: "titleMode")) ?? .atStart
         stage.titleRepeatMinutes = defs.integer(forKey: "titleRepeatMinutes")
