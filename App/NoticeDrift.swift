@@ -10,14 +10,14 @@ import CoreGraphics
 /// counted exactly once however large the step that met it.
 struct NoticeDrift {
 
-    /// How long the notice takes to cross the display's short edge. Derived
-    /// from the short edge rather than fixed in points so the movement reads
-    /// the same on a laptop and on a 5K panel, which is the same reasoning the
+    /// How long the box takes to cross the display's short edge. Derived from
+    /// the short edge rather than fixed in points so the movement reads the
+    /// same on a laptop and on a 5K panel, which is the same reasoning the
     /// title caption's insets use.
     ///
-    /// Eighteen seconds is slow enough to read the message twice on the way
-    /// past. A screensaver that makes you chase the text has failed at the one
-    /// job this notice has.
+    /// Eighteen seconds is a drift rather than a bounce: fast enough to see it
+    /// move without watching for it, slow enough not to pull the eye off the
+    /// message it is circling.
     static let secondsToCrossShortEdge: CGFloat = 18
 
     /// The starting direction, as a ratio of vertical to horizontal travel.
@@ -43,11 +43,16 @@ struct NoticeDrift {
                height: max(0, bounds.height - size.height))
     }
 
-    /// Starts the box in the middle, which is where the notice used to sit, so
-    /// the first thing on screen is what a reader of the old build would expect.
+    /// Where the box starts, as a fraction of the distance it may travel.
+    /// Deliberately not the middle: the message it drifts behind is centred,
+    /// and a logo that begins on top of the words is unreadable for the first
+    /// few seconds, which are the seconds someone is most likely to be looking.
+    private static let start = CGPoint(x: 0.25, y: 0.72)
+
     init(size: CGSize, in bounds: CGRect) {
         let travel = Self.travel(in: bounds, size: size)
-        origin = CGPoint(x: travel.midX, y: travel.midY)
+        origin = CGPoint(x: travel.minX + travel.width * Self.start.x,
+                         y: travel.minY + travel.height * Self.start.y)
         let speed = min(bounds.width, bounds.height) / Self.secondsToCrossShortEdge
         let length = (1 + Self.slope * Self.slope).squareRoot()
         velocity = CGVector(dx: speed / length, dy: speed * Self.slope / length)

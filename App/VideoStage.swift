@@ -75,9 +75,11 @@ final class VideoStage: NSView {
     /// photos were framed before it was measured.
     private(set) var currentFocus: PhotoFocus?
     private var notice: NSTextField?
-    /// Where the notice is and which way it is going. Nil while no notice is
-    /// up, and while Reduce Motion is on, which is what `layoutNotice` reads to
-    /// decide between drifting and sitting in the middle.
+    /// The app's mark, drifting about behind the message. Nil until a notice
+    /// has been shown once, and hidden rather than destroyed afterwards.
+    private var logo: NSImageView?
+    /// Where the logo is and which way it is going. Nil while no notice is up,
+    /// and while Reduce Motion is on, which is what keeps the screen still.
     private var noticeDrift: NoticeDrift?
     private var noticeLink: CADisplayLink?
     /// The timestamp of the last drift step, so the step is advanced by real
@@ -890,7 +892,7 @@ final class VideoStage: NSView {
             guard !configured.isEmpty else {
                 return L10n.string(
                     "stage.display_no_sources",
-                    defaultValue: "No sources are selected for this display.\nChoose some in Settings ▸ Display.")
+                    defaultValue: "No Source Configured")
             }
             return L10n.format(
                 "stage.display_no_videos",
@@ -914,22 +916,21 @@ final class VideoStage: NSView {
             defaultValue: "No videos found in the sources that are switched on.")
     }
 
-    /// Text on the black window — the same instinct as Rainy Day's
-    /// empty-backgrounds notice. A saver that comes up black and silent looks
-    /// broken; one that says why doesn't.
+    /// A stage with nothing to play says so: a faint line in the middle of the
+    /// display, with the app's own mark drifting about behind it the way the
+    /// logo on an idle DVD player did.
     ///
-    /// It drifts rather than sitting still, and changes colour each time it
-    /// meets an edge, which is the idle screen every DVD player showed. The
-    /// point is not the nostalgia: a message that moves is read as something
-    /// the app is deliberately telling you, where the same words held still on
-    /// black read as the thing that is broken.
+    /// The division of labour is deliberate. The message holds still because it
+    /// has to be read; the logo moves because a black screen with a single
+    /// still line on it reads as the thing that is broken, and something moving
+    /// on it reads as a screensaver doing its job.
     private func showNotice(_ text: String) {
         scLog("notice: \(text.replacingOccurrences(of: "\n", with: " "))")
         if notice == nil {
             let field = NSTextField(wrappingLabelWithString: text)
             field.alignment = .center
             field.font = NSFont.preferredFont(forTextStyle: .title1)
-            field.textColor = Self.noticeColours[0]
+            field.textColor = NSColor.white.withAlphaComponent(Self.noticeTextAlpha)
             field.drawsBackground = false
             field.isSelectable = false
             addSubview(field)
@@ -947,25 +948,48 @@ final class VideoStage: NSView {
         stopNoticeDrift()
     }
 
-    /// Colours a notice cycles through, one per bounce. A fixed list rather
-    /// than a random colour, because random can land on something that reads
-    /// badly on black and this is the one thing on screen.
-    private static let noticeColours: [NSColor] = [
-        .white, .systemTeal, .systemYellow, .systemPink,
-        .systemGreen, .systemOrange, .systemPurple, .systemBlue,
+    /// Faint, but not so faint it cannot be read across a room. The message is
+    /// the only instruction on screen; the logo is the thing drawing the eye.
+    private static let noticeTextAlpha: CGFloat = 0.45
+
+    /// Colours the logo cycles through, one per bounce. A fixed list rather
+    /// than a random colour, because random can land on something that barely
+    /// separates from black.
+    private static let logoColours: [NSColor] = [
+        .systemTeal, .systemYellow, .systemPink, .systemGreen,
+        .systemOrange, .systemPurple, .systemBlue, .white,
     ]
 
-    /// Reduce Motion gets the old behaviour: the same words, held in the middle.
-    /// The desk already honours this setting, and a notice that will not keep
-    /// still is exactly what someone who asked for less movement is asking to
-    /// be spared.
+    /// The logo's height, as a fraction of the display's short edge, so it is
+    /// the same size on a laptop and a 5K panel.
+    private static let logoHeightRatio: CGFloat = 0.12
+
+    /// Reduce Motion gets a still screen: the message alone, no logo. The desk
+    /// already honours this setting, and a mark bouncing around the display is
+    /// exactly what someone who asked for less movement is asking to be spared.
     private func startNoticeDrift() {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             stopNoticeDrift()
             return
         }
         guard noticeLink == nil else { return }
-        noticeDrift = NoticeDrift(size: noticeSize(), in: bounds)
+        if logo == nil {
+            let view = NSImageView()
+            // The app's own mark, and the same symbol the status item uses. A
+            // template image takes a tint, which the app icon — a blue plate with
+            // artwork on it — would not: bouncing that would read as a floating
+            // app tile rather than as a logo.
+            let mark = NSImage(systemSymbolName: "film.stack", accessibilityDescription: nil)
+            mark?.isTemplate = true
+            view.image = mark
+            view.imageScaling = .scaleProportionallyUpOrDown
+            view.contentTintColor = Self.logoColours[0]
+            addSubview(view)
+            keepVideoBehind()
+            logo = view
+        }
+        logo?.isHidden = false
+        noticeDrift = NoticeDrift(size: logoSize(), in: bounds)
         lastDriftAt = nil
         let link = displayLink(target: self, selector: #selector(driftNotice))
         link.add(to: .main, forMode: .common)
@@ -977,43 +1001,52 @@ final class VideoStage: NSView {
         noticeLink = nil
         noticeDrift = nil
         lastDriftAt = nil
+        logo?.isHidden = true
     }
 
     @objc private func driftNotice() {
-        guard var drift = noticeDrift, let notice = notice, !notice.isHidden else { return }
+        guard var drift = noticeDrift, let logo = logo, !logo.isHidden else { return }
         let now = CACurrentMediaTime()
         defer { lastDriftAt = now }
         // The first tick has nothing to measure from, so it only establishes the
-        // clock. Stepping by an assumed interval here would jump the notice a
+        // clock. Stepping by an assumed interval here would jump the logo a
         // frame's worth before anyone had seen where it started.
         guard let last = lastDriftAt else { return }
-        // A stage can be paused behind a lock screen for hours. Capping the step
-        // stops the notice teleporting across the display on the frame after,
-        // which would look like a fault rather than a bounce.
+        // A stage can sit behind a lock screen for hours. Capping the step stops
+        // the logo teleporting across the display on the frame after, which
+        // would look like a fault rather than a bounce.
         let elapsed = min(now - last, Self.longestDriftStep)
-        let bounces = drift.step(elapsed, in: bounds, size: noticeSize())
+        let size = logoSize()
+        let bounces = drift.step(elapsed, in: bounds, size: size)
         if bounces > 0 {
-            noticeColourIndex = (noticeColourIndex + bounces) % Self.noticeColours.count
-            notice.textColor = Self.noticeColours[noticeColourIndex]
+            noticeColourIndex = (noticeColourIndex + bounces) % Self.logoColours.count
+            logo.contentTintColor = Self.logoColours[noticeColourIndex]
         }
         noticeDrift = drift
-        placeNotice(at: drift.origin)
+        logo.frame = CGRect(origin: drift.origin, size: size)
     }
 
     /// The longest gap a single drift step may represent, in seconds.
     private static let longestDriftStep: CFTimeInterval = 1.0 / 15
 
-    /// The notice's own size: exactly as wide as its longest line wants,
-    /// capped so there is room left to move in. At the full inset width it
-    /// would fill the display and a drift would have nowhere to go.
-    ///
-    /// Hugging the text matters more than it looks. The field is what bounces,
-    /// so any slack between the text and the field's edge becomes an invisible
-    /// margin the message appears to turn round at, short of the screen edge.
+    /// The logo's box, sized off the short edge and kept to the symbol's own
+    /// proportions so it is not stretched.
+    private func logoSize() -> CGSize {
+        let height = min(bounds.width, bounds.height) * Self.logoHeightRatio
+        let ratio: CGFloat
+        if let size = logo?.image?.size, size.height > 0 {
+            ratio = size.width / size.height
+        } else {
+            ratio = 1
+        }
+        return CGSize(width: height * ratio, height: height)
+    }
+
+    /// The message's own size: as wide as its longest line wants, capped so a
+    /// long sentence wraps rather than running off the display.
     private func noticeSize() -> CGSize {
         guard let notice = notice else { return .zero }
-        let inset = bounds.width - 2 * (bounds.width / Self.noticeInsetRatio)
-        let cap = min(inset, bounds.width * Self.noticeWidthCap)
+        let cap = bounds.width - 2 * (bounds.width / Self.noticeInsetRatio)
         // Asked of the label rather than of the string: `attributedStringValue.size()`
         // came back ~50 pt short of the longest line here, and a field sized from it
         // re-wrapped a two-line message onto three. `sizeThatFits` at unlimited width
@@ -1028,36 +1061,25 @@ final class VideoStage: NSView {
         return CGSize(width: width, height: height)
     }
 
-    /// The largest fraction of the display width the notice may occupy, so
-    /// there is always somewhere for it to travel.
-    private static let noticeWidthCap: CGFloat = 0.55
-
-    private func placeNotice(at origin: CGPoint) {
-        guard let notice = notice else { return }
-        let size = noticeSize()
-        notice.frame = CGRect(origin: origin, size: size)
-    }
-
     /// A wrapping label lays its text out from the top of its frame, so the
-    /// frame has to be sized to the text and then placed — inset alone would
+    /// frame has to be sized to the text and then centred — inset alone would
     /// pin the message to the top of the display.
     private func layoutNotice() {
-        guard let notice = notice else { return }
-        let size = noticeSize()
-        if noticeDrift != nil {
-            // Re-seat the drift against the new bounds. A display can change
-            // resolution under a notice that is already running, and a position
-            // that was on screen a moment ago may not be any more.
-            var drift = noticeDrift
-            drift?.step(0, in: bounds, size: size)
-            noticeDrift = drift
-            placeNotice(at: drift?.origin ?? CGPoint(x: bounds.midX - size.width / 2,
-                                                     y: bounds.midY - size.height / 2))
-        } else {
+        if let notice = notice {
+            let size = noticeSize()
             notice.frame = CGRect(x: bounds.midX - size.width / 2,
                                   y: bounds.midY - size.height / 2,
                                   width: size.width,
                                   height: size.height)
+        }
+        // Re-seat the logo against the new bounds. A display can change
+        // resolution under a notice that is already up, and a position that was
+        // on screen a moment ago may not be any more.
+        if var drift = noticeDrift, let logo = logo {
+            let size = logoSize()
+            drift.step(0, in: bounds, size: size)
+            noticeDrift = drift
+            logo.frame = CGRect(origin: drift.origin, size: size)
         }
     }
 }
