@@ -28,7 +28,7 @@ enum TitleMode: Int {
 }
 
 /// How each video is fitted to the display it plays on.
-enum VideoScaling: Int {
+enum VideoScaling: Int, Codable {
     /// Fill the display; overflow on the long axis is cropped away.
     case fullScreen = 0
     /// Whole frame visible, letterboxed or pillarboxed to fit.
@@ -53,8 +53,10 @@ enum VideoLibrary {
     /// Just the ones switched on for playback.
     static var enabledSources: [VideoSource] { sources.filter(\.isEnabled) }
 
-    /// Everything the enabled sources offer, in the order they will be played
-    /// in sequential mode.
+    /// Everything a playback configuration offers, in the order it will be
+    /// played in sequential mode. Without an explicit configuration, this uses
+    /// only globally enabled sources; a per-display selection is independent
+    /// of those global switches.
     ///
     /// Sorted **within** each source, with the sources kept in the user's own
     /// order — so "sequential" means the first source's videos in path order,
@@ -64,8 +66,8 @@ enum VideoLibrary {
     ///
     /// Read fresh on every activation rather than cached, so adding or removing
     /// files takes effect the next time the saver comes up.
-    static func playlist() -> [URL] {
-        enabledSources.flatMap(items(in:))
+    static func playlist(sources: [VideoSource]? = nil) -> [URL] {
+        (sources ?? enabledSources).flatMap(items(in:))
     }
 
     /// Whether photos join the playlist, read fresh so the setting applies to
@@ -154,8 +156,9 @@ enum VideoLibrary {
     ///   video on each display". Counted in runs rather than in files, because
     ///   starting a display halfway through a directory would break the very thing
     ///   the grouping exists to guarantee.
-    static func orderedPlaylist(_ order: PlaybackOrder, startingAtRun offset: Int = 0) -> [URL] {
-        var runs = runs(in: playlist())
+    static func orderedPlaylist(_ order: PlaybackOrder, startingAtRun offset: Int = 0,
+                                sources: [VideoSource]? = nil) -> [URL] {
+        var runs = runs(in: playlist(sources: sources))
         if order == .random {
             runs = runs.shuffled().map { $0.count > 1 ? $0.shuffled() : $0 }
         }

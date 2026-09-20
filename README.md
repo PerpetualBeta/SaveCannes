@@ -57,7 +57,7 @@ Click the menu bar icon → **Settings…** for:
 - **Permissions** — accessibility status (required only if you enable Lock Screen on dismiss)
 - **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
 - **Playback** — order, and sound
-- **Display** — how each video is fitted to the screen, and whether every display shows the same one
+- **Display** — how each video is fitted to the screen, whether every display shows the same one, and optional source/fitting choices for each physical display
 - **Photos** — whether photos play, and how long each is held
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, and a global "Play now" hotkey
@@ -199,6 +199,12 @@ Every display gets its own fullscreen window and its own playback. What they sho
 - **Random order lets you choose.** Leave **Different video on each display** on (the default) and each display gets its own shuffle — a three-monitor desk plays three different films at once. Turn it off and every display plays the same video from one shared shuffle, all started together.
 
 Your choice is remembered while the control is locked: switch to sequential order and back to random, and the toggle is where you left it.
+
+#### Per-display playback
+
+The **Display** section can also configure each currently connected physical display independently. Choose **Configure…** beside a display, then select the sources it may play and its size-on-screen mode. This is the useful setup when, for example, an ultrawide display has a library of 21:9 films and a MacBook display has a separate library of 16:10 footage.
+
+Displays you leave unconfigured keep the global source and size settings. A configured external display remembers its choices when disconnected and reconnects, so a dock or cable change does not mean setting it up again. Choosing **Use global settings** beside a display removes just that display's profile.
 
 Displays showing the same video are started together but aren't frame-locked: separate players drift by a frame or two over a long clip. Side by side you're unlikely to notice; if it ever matters, the fix is `AVPlayer.setRate(_:time:atHostTime:)` against a common clock.
 
