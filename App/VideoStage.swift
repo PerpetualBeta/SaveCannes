@@ -897,10 +897,18 @@ final class VideoStage: NSView {
                     "stage.display_no_sources",
                     defaultValue: "No Source Configured")
             }
-            return L10n.format(
-                "stage.display_no_videos",
-                defaultValue: "No videos found in the %d sources selected for this display.",
-                configured.count)
+            // Counted strings need a singular, the way `none_playable` above
+            // does. "the 1 sources" is the shape a format string gives you when
+            // nobody checked the small number, and it is always the small
+            // number the user is looking at when something has gone wrong.
+            return configured.count == 1
+                ? L10n.string(
+                    "stage.display_no_videos_one",
+                    defaultValue: "No videos found in the source selected for this display.")
+                : L10n.format(
+                    "stage.display_no_videos",
+                    defaultValue: "No videos found in the %d sources selected for this display.",
+                    configured.count)
         }
         let all = VideoLibrary.sources
         guard !all.isEmpty else {
@@ -909,10 +917,14 @@ final class VideoStage: NSView {
                 defaultValue: "No video sources yet.\nAdd a folder, a file or a stream in Save Cannes ▸ Settings…")
         }
         guard all.contains(where: \.isEnabled) else {
-            return L10n.format(
-                "stage.all_sources_off",
-                defaultValue: "All %d sources are switched off.\nTurn one on in Save Cannes ▸ Settings…",
-                all.count)
+            return all.count == 1
+                ? L10n.string(
+                    "stage.all_sources_off_one",
+                    defaultValue: "Your only source is switched off.\nTurn it on in Save Cannes ▸ Settings…")
+                : L10n.format(
+                    "stage.all_sources_off",
+                    defaultValue: "All %d sources are switched off.\nTurn one on in Save Cannes ▸ Settings…",
+                    all.count)
         }
         return L10n.string(
             "stage.no_videos",
@@ -1001,7 +1013,7 @@ final class VideoStage: NSView {
             logo = view
         }
         logo?.isHidden = false
-        noticeDrift = NoticeDrift(size: logoSize(), in: bounds)
+        noticeDrift = NoticeDrift(size: logoSize(), in: bounds, avoiding: messageRect())
         lastDriftAt = nil
         let link = displayLink(target: self, selector: #selector(driftNotice))
         link.add(to: .main, forMode: .common)
@@ -1067,6 +1079,17 @@ final class VideoStage: NSView {
 
     /// The logo's box, sized off this display's short edge and kept to the
     /// drawing's own proportions so it is never stretched.
+    /// Where the message sits, so the logo can be started clear of it. Computed
+    /// rather than read off the field's frame, because the drift is built before
+    /// `layout()` has placed anything.
+    private func messageRect() -> CGRect {
+        let size = noticeSize()
+        return CGRect(x: bounds.midX - size.width / 2,
+                      y: bounds.midY - size.height / 2,
+                      width: size.width,
+                      height: size.height)
+    }
+
     private func logoSize() -> CGSize {
         let height = min(bounds.width, bounds.height) * Self.logoHeightRatio
         return CGSize(width: height * DVDLogo.aspectRatio, height: height)

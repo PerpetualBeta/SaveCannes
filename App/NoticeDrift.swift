@@ -94,17 +94,59 @@ struct NoticeDrift {
     /// Speed is *not* randomised. It is derived from the display's short edge
     /// so the movement reads the same on a laptop and a 5K panel, and two
     /// screens moving at visibly different rates would look like a fault.
-    init(size: CGSize, in bounds: CGRect) {
+    /// How many starting positions to try before giving up on clearing
+    /// `avoiding` and taking the furthest corner instead. Twenty is far more
+    /// than enough for a message that occupies a fraction of a display, and the
+    /// fallback covers the case where it does not — a very short display, or a
+    /// message so long there is nowhere clear to stand.
+    private static let startAttempts = 20
+
+    init(size: CGSize, in bounds: CGRect, avoiding: CGRect? = nil) {
         var rng = SystemRandomNumberGenerator()
-        self.init(size: size, in: bounds, using: &rng)
+        self.init(size: size, in: bounds, avoiding: avoiding, using: &rng)
     }
 
     /// The same, with the randomness handed in, so a test can pin it.
-    init<R: RandomNumberGenerator>(size: CGSize, in bounds: CGRect, using rng: inout R) {
+    ///
+    /// `avoiding` is the message the logo drifts around. The start must not sit
+    /// on top of it: the logo is solid and the message is faint, so a logo that
+    /// begins over the words hides the one instruction on the screen for as
+    /// long as it takes to drift off — and those are the seconds someone is
+    /// most likely to be reading. It may cross the message later; that is a
+    /// passing occlusion and reads as movement rather than as a fault.
+    init<R: RandomNumberGenerator>(size: CGSize, in bounds: CGRect,
+                                   avoiding: CGRect? = nil, using rng: inout R) {
         let travel = Self.travel(in: bounds, size: size)
-        origin = CGPoint(
-            x: travel.minX + travel.width * CGFloat.random(in: Self.startRange, using: &rng),
-            y: travel.minY + travel.height * CGFloat.random(in: Self.startRange, using: &rng))
+        func draw() -> CGPoint {
+            CGPoint(x: travel.minX + travel.width * CGFloat.random(in: Self.startRange, using: &rng),
+                    y: travel.minY + travel.height * CGFloat.random(in: Self.startRange, using: &rng))
+        }
+        var start = draw()
+        if let avoiding {
+            var tries = 0
+            while CGRect(origin: start, size: size).intersects(avoiding),
+                  tries < Self.startAttempts {
+                start = draw()
+                tries += 1
+            }
+            if CGRect(origin: start, size: size).intersects(avoiding) {
+                // Nowhere clear was found. Take the corner of the travel area
+                // whose centre is furthest from the message and stand there,
+                // which is the best available answer rather than a random one.
+                let corners = [CGPoint(x: travel.minX, y: travel.minY),
+                               CGPoint(x: travel.maxX, y: travel.minY),
+                               CGPoint(x: travel.minX, y: travel.maxY),
+                               CGPoint(x: travel.maxX, y: travel.maxY)]
+                start = corners.max(by: { a, b in
+                    func distance(_ p: CGPoint) -> CGFloat {
+                        let c = CGRect(origin: p, size: size)
+                        return hypot(c.midX - avoiding.midX, c.midY - avoiding.midY)
+                    }
+                    return distance(a) < distance(b)
+                }) ?? start
+            }
+        }
+        origin = start
         let slope = CGFloat.random(in: Self.slopeRange, using: &rng)
         let speed = min(bounds.width, bounds.height) / Self.secondsToCrossShortEdge
         let length = (1 + slope * slope).squareRoot()
