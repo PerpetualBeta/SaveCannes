@@ -233,9 +233,10 @@ struct SaveCannesSettingsContent: View {
 
             Divider()
 
-            Text("Per-display playback")
+            Text(L10n.string("settings.per_display", defaultValue: "Per-display playback"))
                 .font(.headline)
-            Text("Configure a connected display to give it its own sources and fitting mode. Displays left unconfigured use the settings above.")
+            Text(L10n.string("settings.per_display_note",
+                             defaultValue: "Configure a connected display to give it its own sources and fitting mode. Displays left unconfigured use the settings above."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -245,15 +246,25 @@ struct SaveCannesSettingsContent: View {
                         HStack {
                             Text(display.name)
                             Spacer()
-                            Button("Use global settings") { removeProfile(for: display.id) }
-                                .font(.caption)
+                            Button(L10n.string("settings.per_display_use_global",
+                                               defaultValue: "Use global settings")) {
+                                removeProfile(for: display.id)
+                            }
+                            .font(.caption)
                         }
-                        Picker("Size:", selection: scalingBinding(for: display.id)) {
-                            Text("Full screen, cropped to fit").tag(VideoScaling.fullScreen)
-                            Text("Fit to screen, no cropping").tag(VideoScaling.fitToScreen)
-                            Text("Original size").tag(VideoScaling.originalSize)
+                        // Same keys as the global picker above, so the two rows can
+                        // never read differently in a translated build.
+                        Picker(L10n.string("settings.size", defaultValue: "Size:"),
+                               selection: scalingBinding(for: display.id)) {
+                            Text(L10n.string("settings.size_full", defaultValue: "Full screen, cropped to fit"))
+                                .tag(VideoScaling.fullScreen)
+                            Text(L10n.string("settings.size_fit", defaultValue: "Fit to screen, no cropping"))
+                                .tag(VideoScaling.fitToScreen)
+                            Text(L10n.string("settings.size_original", defaultValue: "Original size"))
+                                .tag(VideoScaling.originalSize)
                         }
-                        Text("Sources for this display:")
+                        Text(L10n.string("settings.per_display_sources",
+                                         defaultValue: "Sources for this display:"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         ForEach(sources) { source in
@@ -261,7 +272,8 @@ struct SaveCannesSettingsContent: View {
                                 .font(.caption)
                         }
                         if sources.isEmpty {
-                            Text("Add sources above, then return here to choose what this display plays.")
+                            Text(L10n.string("settings.per_display_no_sources",
+                                             defaultValue: "Add sources above, then return here to choose what this display plays."))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -271,7 +283,9 @@ struct SaveCannesSettingsContent: View {
                     HStack {
                         Text(display.name)
                         Spacer()
-                        Button("Configure…") { addProfile(for: display.screen) }
+                        Button(L10n.string("settings.per_display_configure", defaultValue: "Configure…")) {
+                            addProfile(for: display.screen)
+                        }
                     }
                 }
             }
