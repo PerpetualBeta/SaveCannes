@@ -75,9 +75,12 @@ final class VideoStage: NSView {
     /// photos were framed before it was measured.
     private(set) var currentFocus: PhotoFocus?
     private var notice: NSTextField?
-    /// The app's mark, drifting about behind the message. Nil until a notice
-    /// has been shown once, and hidden rather than destroyed afterwards.
-    private var logo: NSImageView?
+    /// The logo, drifting about behind the message. Nil until a notice has been
+    /// shown once, and hidden rather than destroyed afterwards.
+    private var logo: DVDLogo?
+    /// Corners met since this stage came up. Logged, because the whole appeal
+    /// of the thing being imitated is how rarely it happens.
+    private var cornerHits = 0
     /// Where the logo is and which way it is going. Nil while no notice is up,
     /// and while Reduce Motion is on, which is what keeps the screen still.
     private var noticeDrift: NoticeDrift?
@@ -974,16 +977,8 @@ final class VideoStage: NSView {
         }
         guard noticeLink == nil else { return }
         if logo == nil {
-            let view = NSImageView()
-            // The app's own mark, and the same symbol the status item uses. A
-            // template image takes a tint, which the app icon — a blue plate with
-            // artwork on it — would not: bouncing that would read as a floating
-            // app tile rather than as a logo.
-            let mark = NSImage(systemSymbolName: "film.stack", accessibilityDescription: nil)
-            mark?.isTemplate = true
-            view.image = mark
-            view.imageScaling = .scaleProportionallyUpOrDown
-            view.contentTintColor = Self.logoColours[0]
+            let view = DVDLogo(frame: .zero)
+            view.tint = Self.logoColours[0]
             addSubview(view)
             keepVideoBehind()
             logo = view
@@ -1017,29 +1012,50 @@ final class VideoStage: NSView {
         // would look like a fault rather than a bounce.
         let elapsed = min(now - last, Self.longestDriftStep)
         let size = logoSize()
-        let bounces = drift.step(elapsed, in: bounds, size: size)
-        if bounces > 0 {
-            noticeColourIndex = (noticeColourIndex + bounces) % Self.logoColours.count
-            logo.contentTintColor = Self.logoColours[noticeColourIndex]
+        let bounce = drift.step(elapsed, in: bounds, size: size)
+        if !bounce.isEmpty {
+            noticeColourIndex = (noticeColourIndex + bounce.edges) % Self.logoColours.count
+            logo.tint = Self.logoColours[noticeColourIndex]
         }
         noticeDrift = drift
         logo.frame = CGRect(origin: drift.origin, size: size)
+        if bounce.isCorner { celebrateCorner() }
     }
+
+    /// The corner is the joke. Landing exactly in one is the thing people sat
+    /// and waited for, and a logo that met a corner with no more ceremony than
+    /// it meets a side would throw away the only reason to imitate this at all.
+    ///
+    /// Marked rather than announced: the logo goes white and swells briefly. A
+    /// screensaver has no business putting up a banner, and anyone who has been
+    /// watching long enough to see it will know exactly what just happened.
+    private func celebrateCorner() {
+        guard let logo = logo, let layer = logo.layer else { return }
+        cornerHits += 1
+        scLog("notice: corner hit (\(cornerHits) this session)")
+        logo.tint = .white
+        let pulse = CAKeyframeAnimation(keyPath: "transform.scale")
+        pulse.values = [1.0, Self.cornerPulseScale, 1.0]
+        pulse.keyTimes = [0, 0.3, 1]
+        pulse.duration = Self.cornerPulseSeconds
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(pulse, forKey: "cornerPulse")
+    }
+
+    /// How far the logo swells on a corner, and for how long. Big enough to
+    /// catch the eye of someone already looking at it, small enough that it is
+    /// not a cartoon.
+    private static let cornerPulseScale: CGFloat = 1.35
+    private static let cornerPulseSeconds: CFTimeInterval = 0.9
 
     /// The longest gap a single drift step may represent, in seconds.
     private static let longestDriftStep: CFTimeInterval = 1.0 / 15
 
-    /// The logo's box, sized off the short edge and kept to the symbol's own
-    /// proportions so it is not stretched.
+    /// The logo's box, sized off this display's short edge and kept to the
+    /// drawing's own proportions so it is never stretched.
     private func logoSize() -> CGSize {
         let height = min(bounds.width, bounds.height) * Self.logoHeightRatio
-        let ratio: CGFloat
-        if let size = logo?.image?.size, size.height > 0 {
-            ratio = size.width / size.height
-        } else {
-            ratio = 1
-        }
-        return CGSize(width: height * ratio, height: height)
+        return CGSize(width: height * DVDLogo.aspectRatio, height: height)
     }
 
     /// The message's own size: as wide as its longest line wants, capped so a
