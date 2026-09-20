@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import QuartzCore
 
 /// The video surface for one display: an `AVPlayerLayer` walking a playlist,
 /// skipping anything it can't play, looping forever.
@@ -31,7 +32,9 @@ final class VideoStage: NSView {
     var sharedPlaylist: [URL]?
 
     /// A display profile's selected sources. nil preserves the global source
-    /// list; an empty array intentionally yields the usual empty-state notice.
+    /// list; an empty array is a display that has been configured and told to
+    /// play nothing, which `emptySourceMessage()` says in those words rather
+    /// than blaming the global switches.
     var sourcesOverride: [VideoSource]?
 
     /// How far into the list this stage starts. Without it, "different video
@@ -72,6 +75,21 @@ final class VideoStage: NSView {
     /// photos were framed before it was measured.
     private(set) var currentFocus: PhotoFocus?
     private var notice: NSTextField?
+    /// The logo, drifting about behind the message. Nil until a notice has been
+    /// shown once, and hidden rather than destroyed afterwards.
+    private var logo: DVDLogo?
+    /// Corners met since this stage came up. Logged, because the whole appeal
+    /// of the thing being imitated is how rarely it happens.
+    private var cornerHits = 0
+    /// Where the logo is and which way it is going. Nil while no notice is up,
+    /// and while Reduce Motion is on, which is what keeps the screen still.
+    private var noticeDrift: NoticeDrift?
+    private var noticeLink: CADisplayLink?
+    /// The timestamp of the last drift step, so the step is advanced by real
+    /// elapsed time rather than by an assumed frame interval. A display link
+    /// that misses beats would otherwise slow the notice down.
+    private var lastDriftAt: CFTimeInterval?
+    private var noticeColourIndex = 0
     private let overlay = TitleOverlay(frame: .zero)
     /// What the caption should say for the item playing now, kept so the
     /// periodic repeat has something to re-show.
@@ -149,6 +167,7 @@ final class VideoStage: NSView {
 
     deinit {
         deskLink?.invalidate()
+        noticeLink?.invalidate()
         detachItem()
         titleTimer?.invalidate()
         watchdog?.invalidate()
@@ -202,6 +221,10 @@ final class VideoStage: NSView {
         currentPixelSize = nil
         stopStillTimer()
         clearStill()
+        // The notice belongs to a stage that is showing; a stopped stage has
+        // nothing to explain, and leaving the drift running would keep a
+        // display link alive on a view nobody is looking at.
+        hideNotice()
     }
 
     /// The asset and playhead position for `Screenshot`, or nil when nothing
@@ -864,6 +887,21 @@ final class VideoStage: NSView {
     /// found" when the videos are right there, merely unticked, is actively
     /// misleading.
     private func emptySourceMessage() -> String {
+        // A display with its own profile is a fourth situation, and the three
+        // below would all describe it wrongly: they talk about the global
+        // source list and the global switches, neither of which decides what a
+        // configured display plays.
+        if let configured = sourcesOverride {
+            guard !configured.isEmpty else {
+                return L10n.string(
+                    "stage.display_no_sources",
+                    defaultValue: "No Source Configured")
+            }
+            return L10n.format(
+                "stage.display_no_videos",
+                defaultValue: "No videos found in the %d sources selected for this display.",
+                configured.count)
+        }
         let all = VideoLibrary.sources
         guard !all.isEmpty else {
             return L10n.string(
@@ -881,16 +919,21 @@ final class VideoStage: NSView {
             defaultValue: "No videos found in the sources that are switched on.")
     }
 
-    /// Centred white text on the black window — the same instinct as Rainy
-    /// Day's empty-backgrounds notice. A saver that comes up black and
-    /// silent looks broken; one that says why doesn't.
+    /// A stage with nothing to play says so: a faint line in the middle of the
+    /// display, with the app's own mark drifting about behind it the way the
+    /// logo on an idle DVD player did.
+    ///
+    /// The division of labour is deliberate. The message holds still because it
+    /// has to be read; the logo moves because a black screen with a single
+    /// still line on it reads as the thing that is broken, and something moving
+    /// on it reads as a screensaver doing its job.
     private func showNotice(_ text: String) {
         scLog("notice: \(text.replacingOccurrences(of: "\n", with: " "))")
         if notice == nil {
             let field = NSTextField(wrappingLabelWithString: text)
             field.alignment = .center
             field.font = NSFont.preferredFont(forTextStyle: .title1)
-            field.textColor = .white
+            field.textColor = NSColor.white.withAlphaComponent(Self.noticeTextAlpha)
             field.drawsBackground = false
             field.isSelectable = false
             addSubview(field)
@@ -899,24 +942,174 @@ final class VideoStage: NSView {
         }
         notice?.stringValue = text
         notice?.isHidden = false
+        startNoticeDrift()
         needsLayout = true
     }
 
     private func hideNotice() {
         notice?.isHidden = true
+        stopNoticeDrift()
+    }
+
+    /// Faint, but not so faint it cannot be read across a room. The message is
+    /// the only instruction on screen; the logo is the thing drawing the eye.
+    private static let noticeTextAlpha: CGFloat = 0.45
+
+    /// Colours the logo may take, one per bounce, drawn at random from this
+    /// list rather than taken in turn. Cycling meant two displays that started
+    /// together ran the same colours in the same order for as long as they
+    /// happened to bounce in step.
+    ///
+    /// A fixed list rather than an arbitrary colour, because arbitrary lands on
+    /// things that barely separate from black.
+    private static let logoColours: [NSColor] = [
+        .systemTeal, .systemYellow, .systemPink, .systemGreen,
+        .systemOrange, .systemPurple, .systemBlue, .white,
+    ]
+
+    /// A colour from the list that is not the one showing. Without the
+    /// exclusion a bounce lands on the same colour one time in eight and reads
+    /// as a missed frame rather than as a bounce.
+    private func nextLogoColour() -> NSColor {
+        var index = Int.random(in: 0..<Self.logoColours.count)
+        if index == noticeColourIndex {
+            index = (index + 1 + Int.random(in: 0..<(Self.logoColours.count - 1)))
+                % Self.logoColours.count
+        }
+        noticeColourIndex = index
+        return Self.logoColours[index]
+    }
+
+    /// The logo's height, as a fraction of the display's short edge, so it is
+    /// the same size on a laptop and a 5K panel.
+    private static let logoHeightRatio: CGFloat = 0.12
+
+    /// Reduce Motion gets a still screen: the message alone, no logo. The desk
+    /// already honours this setting, and a mark bouncing around the display is
+    /// exactly what someone who asked for less movement is asking to be spared.
+    private func startNoticeDrift() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            stopNoticeDrift()
+            return
+        }
+        guard noticeLink == nil else { return }
+        if logo == nil {
+            let view = DVDLogo(frame: .zero)
+            view.tint = nextLogoColour()
+            addSubview(view)
+            keepVideoBehind()
+            logo = view
+        }
+        logo?.isHidden = false
+        noticeDrift = NoticeDrift(size: logoSize(), in: bounds)
+        lastDriftAt = nil
+        let link = displayLink(target: self, selector: #selector(driftNotice))
+        link.add(to: .main, forMode: .common)
+        noticeLink = link
+    }
+
+    private func stopNoticeDrift() {
+        noticeLink?.invalidate()
+        noticeLink = nil
+        noticeDrift = nil
+        lastDriftAt = nil
+        logo?.isHidden = true
+    }
+
+    @objc private func driftNotice() {
+        guard var drift = noticeDrift, let logo = logo, !logo.isHidden else { return }
+        let now = CACurrentMediaTime()
+        defer { lastDriftAt = now }
+        // The first tick has nothing to measure from, so it only establishes the
+        // clock. Stepping by an assumed interval here would jump the logo a
+        // frame's worth before anyone had seen where it started.
+        guard let last = lastDriftAt else { return }
+        // A stage can sit behind a lock screen for hours. Capping the step stops
+        // the logo teleporting across the display on the frame after, which
+        // would look like a fault rather than a bounce.
+        let elapsed = min(now - last, Self.longestDriftStep)
+        let size = logoSize()
+        let bounce = drift.step(elapsed, in: bounds, size: size)
+        if !bounce.isEmpty { logo.tint = nextLogoColour() }
+        noticeDrift = drift
+        logo.frame = CGRect(origin: drift.origin, size: size)
+        if bounce.isCorner { celebrateCorner() }
+    }
+
+    /// The corner is the joke. Landing exactly in one is the thing people sat
+    /// and waited for, and a logo that met a corner with no more ceremony than
+    /// it meets a side would throw away the only reason to imitate this at all.
+    ///
+    /// Marked rather than announced: the logo goes white and swells briefly. A
+    /// screensaver has no business putting up a banner, and anyone who has been
+    /// watching long enough to see it will know exactly what just happened.
+    private func celebrateCorner() {
+        guard let logo = logo, let layer = logo.layer else { return }
+        cornerHits += 1
+        scLog("notice: corner hit (\(cornerHits) this session)")
+        logo.tint = .white
+        let pulse = CAKeyframeAnimation(keyPath: "transform.scale")
+        pulse.values = [1.0, Self.cornerPulseScale, 1.0]
+        pulse.keyTimes = [0, 0.3, 1]
+        pulse.duration = Self.cornerPulseSeconds
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(pulse, forKey: "cornerPulse")
+    }
+
+    /// How far the logo swells on a corner, and for how long. Big enough to
+    /// catch the eye of someone already looking at it, small enough that it is
+    /// not a cartoon.
+    private static let cornerPulseScale: CGFloat = 1.35
+    private static let cornerPulseSeconds: CFTimeInterval = 0.9
+
+    /// The longest gap a single drift step may represent, in seconds.
+    private static let longestDriftStep: CFTimeInterval = 1.0 / 15
+
+    /// The logo's box, sized off this display's short edge and kept to the
+    /// drawing's own proportions so it is never stretched.
+    private func logoSize() -> CGSize {
+        let height = min(bounds.width, bounds.height) * Self.logoHeightRatio
+        return CGSize(width: height * DVDLogo.aspectRatio, height: height)
+    }
+
+    /// The message's own size: as wide as its longest line wants, capped so a
+    /// long sentence wraps rather than running off the display.
+    private func noticeSize() -> CGSize {
+        guard let notice = notice else { return .zero }
+        let cap = bounds.width - 2 * (bounds.width / Self.noticeInsetRatio)
+        // Asked of the label rather than of the string: `attributedStringValue.size()`
+        // came back ~50 pt short of the longest line here, and a field sized from it
+        // re-wrapped a two-line message onto three. `sizeThatFits` at unlimited width
+        // is the label's own answer to "how wide do you want to be", newlines included.
+        // One point of slack, so rounding cannot re-wrap a line that already fits.
+        let natural = ceil(notice.sizeThatFits(
+            NSSize(width: CGFloat.greatestFiniteMagnitude,
+                   height: CGFloat.greatestFiniteMagnitude)).width) + 1
+        let width = max(1, min(cap, natural))
+        let height = notice.sizeThatFits(
+            NSSize(width: width, height: .greatestFiniteMagnitude)).height
+        return CGSize(width: width, height: height)
     }
 
     /// A wrapping label lays its text out from the top of its frame, so the
-    /// frame has to be sized to the text and then centred — inset alone
-    /// would pin the message to the top of the display.
+    /// frame has to be sized to the text and then centred — inset alone would
+    /// pin the message to the top of the display.
     private func layoutNotice() {
-        guard let notice = notice else { return }
-        let width = bounds.width - 2 * (bounds.width / Self.noticeInsetRatio)
-        let height = notice.sizeThatFits(
-            NSSize(width: width, height: .greatestFiniteMagnitude)).height
-        notice.frame = CGRect(x: bounds.midX - width / 2,
-                              y: bounds.midY - height / 2,
-                              width: width,
-                              height: height)
+        if let notice = notice {
+            let size = noticeSize()
+            notice.frame = CGRect(x: bounds.midX - size.width / 2,
+                                  y: bounds.midY - size.height / 2,
+                                  width: size.width,
+                                  height: size.height)
+        }
+        // Re-seat the logo against the new bounds. A display can change
+        // resolution under a notice that is already up, and a position that was
+        // on screen a moment ago may not be any more.
+        if var drift = noticeDrift, let logo = logo {
+            let size = logoSize()
+            drift.step(0, in: bounds, size: size)
+            noticeDrift = drift
+            logo.frame = CGRect(origin: drift.origin, size: size)
+        }
     }
 }
