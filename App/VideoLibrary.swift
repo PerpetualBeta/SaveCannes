@@ -53,8 +53,10 @@ enum VideoLibrary {
     /// Just the ones switched on for playback.
     static var enabledSources: [VideoSource] { sources.filter(\.isEnabled) }
 
-    /// Everything the enabled sources offer, in the order they will be played
-    /// in sequential mode.
+    /// Everything a playback configuration offers, in the order it will be
+    /// played in sequential mode. Without an explicit configuration, this uses
+    /// only globally enabled sources; a per-display selection is independent
+    /// of those global switches.
     ///
     /// Sorted **within** each source, with the sources kept in the user's own
     /// order — so "sequential" means the first source's videos in path order,
@@ -65,7 +67,7 @@ enum VideoLibrary {
     /// Read fresh on every activation rather than cached, so adding or removing
     /// files takes effect the next time the saver comes up.
     static func playlist(sources: [VideoSource]? = nil) -> [URL] {
-        (sources ?? enabledSources).filter(\.isEnabled).flatMap(items(in:))
+        (sources ?? enabledSources).flatMap(items(in:))
     }
 
     /// Whether photos join the playlist, read fresh so the setting applies to

@@ -47,6 +47,9 @@ struct SaveCannesSettingsContent: View {
     /// on more than one display, without making duplicate folder grants or
     /// duplicate entries in the main Sources list.
     @State private var displayProfiles: [DisplayProfile] = DisplayProfileStore.load()
+    /// Refreshed when macOS reports a monitor connection or configuration
+    /// change, so the per-display section stays in sync while it is open.
+    @State private var connectedDisplays: [ConnectedDisplay] = []
 
     /// Watches whether this build is trusted for Accessibility. Shared with the rest of
     /// the suite — see `JorvikPermissionWatcher`, which carries the reasoning.
@@ -237,15 +240,15 @@ struct SaveCannesSettingsContent: View {
                 .foregroundStyle(.secondary)
 
             ForEach(connectedDisplays) { display in
-                if let index = displayProfiles.firstIndex(where: { $0.displayID == display.id }) {
+                if displayProfiles.contains(where: { $0.displayID == display.id }) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(display.name)
                             Spacer()
-                            Button("Use global settings") { removeProfile(at: index) }
+                            Button("Use global settings") { removeProfile(for: display.id) }
                                 .font(.caption)
                         }
-                        Picker("Size:", selection: scalingBinding(at: index)) {
+                        Picker("Size:", selection: scalingBinding(for: display.id)) {
                             Text("Full screen, cropped to fit").tag(VideoScaling.fullScreen)
                             Text("Fit to screen, no cropping").tag(VideoScaling.fitToScreen)
                             Text("Original size").tag(VideoScaling.originalSize)
@@ -254,7 +257,7 @@ struct SaveCannesSettingsContent: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         ForEach(sources) { source in
-                            Toggle(source.displayName, isOn: sourceBinding(source.id, profileAt: index))
+                            Toggle(source.displayName, isOn: sourceBinding(source.id, for: display.id))
                                 .font(.caption)
                         }
                         if sources.isEmpty {
@@ -347,7 +350,13 @@ struct SaveCannesSettingsContent: View {
         .onAppear {
             scLog("settings opened; accessibility "
                   + (AXIsProcessTrusted() ? "granted" : "NOT granted") + " for this build")
+            refreshConnectedDisplays()
             recount()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didChangeScreenParametersNotification
+        )) { _ in
+            refreshConnectedDisplays()
         }
     }
 
@@ -379,10 +388,14 @@ struct SaveCannesSettingsContent: View {
         let screen: NSScreen
     }
 
-    private var connectedDisplays: [ConnectedDisplay] {
+    private static func currentDisplays() -> [ConnectedDisplay] {
         NSScreen.screens.map {
             ConnectedDisplay(id: DisplayIdentity.id(for: $0), name: $0.localizedName, screen: $0)
         }
+    }
+
+    private func refreshConnectedDisplays() {
+        connectedDisplays = Self.currentDisplays()
     }
 
     private func addProfile(for screen: NSScreen) {
@@ -392,8 +405,8 @@ struct SaveCannesSettingsContent: View {
         saveProfiles()
     }
 
-    private func removeProfile(at index: Int) {
-        displayProfiles.remove(at: index)
+    private func removeProfile(for displayID: String) {
+        displayProfiles.removeAll { $0.displayID == displayID }
         saveProfiles()
     }
 
@@ -401,21 +414,31 @@ struct SaveCannesSettingsContent: View {
         DisplayProfileStore.save(displayProfiles)
     }
 
-    private func scalingBinding(at index: Int) -> Binding<VideoScaling> {
-        Binding(get: { displayProfiles[index].scaling }, set: {
-            displayProfiles[index].scaling = $0
-            saveProfiles()
+    /// Key bindings by the display identity, never a transient array index.
+    /// Removing another profile can reorder `displayProfiles` while SwiftUI
+    /// still holds this binding, but cannot make a display ID point at a
+    /// different physical display.
+    private func scalingBinding(for displayID: String) -> Binding<VideoScaling> {
+        Binding(
+            get: { displayProfiles.first(where: { $0.displayID == displayID })?.scaling ?? .fullScreen},
+            set: {
+                guard let index = displayProfiles.firstIndex(where: { $0.displayID == displayID }) else { return }
+                displayProfiles[index].scaling = $0
+                saveProfiles()
         })
     }
 
-    private func sourceBinding(_ sourceID: UUID, profileAt index: Int) -> Binding<Bool> {
-        Binding(get: { displayProfiles[index].sourceIDs.contains(sourceID) }, set: { selected in
-            if selected {
-                displayProfiles[index].sourceIDs.insert(sourceID)
-            } else {
-                displayProfiles[index].sourceIDs.remove(sourceID)
-            }
-            saveProfiles()
+    private func sourceBinding(_ sourceID: UUID, for displayID: String) -> Binding<Bool> {
+        Binding(
+            get: {displayProfiles.first(where: { $0.displayID == displayID })?.sourceIDs.contains(sourceID) ?? false},
+            set: { selected in
+                guard let index = displayProfiles.firstIndex(where: { $0.displayID == displayID }) else { return }
+                if selected {
+                    displayProfiles[index].sourceIDs.insert(sourceID)
+                } else {
+                    displayProfiles[index].sourceIDs.remove(sourceID)
+                }
+                saveProfiles()
         })
     }
 

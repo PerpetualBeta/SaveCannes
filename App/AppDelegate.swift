@@ -321,8 +321,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // only. Every display runs its own player, so giving them all audio
         // would play the same soundtrack two or three times over, a few frames
         // apart — which sounds broken rather than loud.
-        let audioScreen = NSScreen.screens.first
-        let profiles = NSScreen.screens.map { DisplayProfileStore.profile(for: $0) }
+        let screens = NSScreen.screens
+        let audioScreen = screens.first
+        let profiles = screens.map { DisplayProfileStore.profile(for: $0) }
         // With no display profiles, preserve the original global playback
         // rules: mirroring builds one playlist here and hands it to every
         // stage, while "Different video on each display" lets every stage
@@ -338,7 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hasProfiles = profiles.contains(where: { $0 != nil })
         let mirrored = !hasProfiles && !differentVideoPerDisplay
         let shared = mirrored ? VideoLibrary.orderedPlaylist(playbackOrder) : nil
-        for (index, screen) in NSScreen.screens.enumerated() {
+        for (index, screen) in screens.enumerated() {
             let profile = profiles[index]
             let configuredSources = profile.map { profile in
                 let ids = profile.sourceIDs
