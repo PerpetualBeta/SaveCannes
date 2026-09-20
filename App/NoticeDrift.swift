@@ -53,12 +53,19 @@ struct NoticeDrift {
     /// it a corner, and no eye could tell it from an exact one.
     static let cornerTolerance: CGFloat = 0.02
 
-    /// The starting direction, as a ratio of vertical to horizontal travel.
-    /// Deliberately not 1, which would send the box along a 45° path that
-    /// retraces itself within a couple of bounces and finds corners often. The
-    /// golden ratio's reciprocal is the least well approximated by a fraction,
-    /// so the path takes the longest possible time to repeat.
-    private static let slope: CGFloat = 0.618_033_988_75
+    /// The range the starting direction is drawn from, as a ratio of vertical
+    /// to horizontal travel.
+    ///
+    /// It excludes 1, which would send the box along a 45° path that retraces
+    /// itself within a couple of bounces, and it stays well away from 0, which
+    /// would slide it along one edge. Everything between is fair.
+    private static let slopeRange: ClosedRange<CGFloat> = 0.45...0.85
+
+    /// The range the starting position is drawn from, as a fraction of the
+    /// distance the box may travel. It avoids the last sixth at each end so the
+    /// logo does not begin in a corner, which would spend the surprise before
+    /// anyone has looked at the screen.
+    private static let startRange: ClosedRange<CGFloat> = 0.15...0.85
 
     /// Top-left-free origin of the box, in the view's coordinates.
     private(set) var origin: CGPoint
@@ -76,19 +83,33 @@ struct NoticeDrift {
                height: max(0, bounds.height - size.height))
     }
 
-    /// Where the box starts, as a fraction of the distance it may travel.
-    /// Deliberately not the middle: the message it drifts behind is centred,
-    /// and a logo that begins on top of the words is unreadable for the first
-    /// few seconds, which are the seconds someone is most likely to be looking.
-    private static let start = CGPoint(x: 0.25, y: 0.72)
-
+    /// Starting position and direction are drawn at random, per instance.
+    ///
+    /// This is what keeps two displays apart. Every stage builds its own drift,
+    /// so a fixed start and a fixed slope put the logo in the same place going
+    /// the same way on every screen, and a two-monitor desk shows the same
+    /// picture twice — which was reported, and is worse than no animation at
+    /// all, because it draws attention to the fact that it is a loop.
+    ///
+    /// Speed is *not* randomised. It is derived from the display's short edge
+    /// so the movement reads the same on a laptop and a 5K panel, and two
+    /// screens moving at visibly different rates would look like a fault.
     init(size: CGSize, in bounds: CGRect) {
+        var rng = SystemRandomNumberGenerator()
+        self.init(size: size, in: bounds, using: &rng)
+    }
+
+    /// The same, with the randomness handed in, so a test can pin it.
+    init<R: RandomNumberGenerator>(size: CGSize, in bounds: CGRect, using rng: inout R) {
         let travel = Self.travel(in: bounds, size: size)
-        origin = CGPoint(x: travel.minX + travel.width * Self.start.x,
-                         y: travel.minY + travel.height * Self.start.y)
+        origin = CGPoint(
+            x: travel.minX + travel.width * CGFloat.random(in: Self.startRange, using: &rng),
+            y: travel.minY + travel.height * CGFloat.random(in: Self.startRange, using: &rng))
+        let slope = CGFloat.random(in: Self.slopeRange, using: &rng)
         let speed = min(bounds.width, bounds.height) / Self.secondsToCrossShortEdge
-        let length = (1 + Self.slope * Self.slope).squareRoot()
-        velocity = CGVector(dx: speed / length, dy: speed * Self.slope / length)
+        let length = (1 + slope * slope).squareRoot()
+        velocity = CGVector(dx: (Bool.random(using: &rng) ? 1 : -1) * speed / length,
+                            dy: (Bool.random(using: &rng) ? 1 : -1) * speed * slope / length)
     }
 
     /// Advances by `seconds` and returns how many edges were met on the way.

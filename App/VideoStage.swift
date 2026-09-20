@@ -955,13 +955,30 @@ final class VideoStage: NSView {
     /// the only instruction on screen; the logo is the thing drawing the eye.
     private static let noticeTextAlpha: CGFloat = 0.45
 
-    /// Colours the logo cycles through, one per bounce. A fixed list rather
-    /// than a random colour, because random can land on something that barely
-    /// separates from black.
+    /// Colours the logo may take, one per bounce, drawn at random from this
+    /// list rather than taken in turn. Cycling meant two displays that started
+    /// together ran the same colours in the same order for as long as they
+    /// happened to bounce in step.
+    ///
+    /// A fixed list rather than an arbitrary colour, because arbitrary lands on
+    /// things that barely separate from black.
     private static let logoColours: [NSColor] = [
         .systemTeal, .systemYellow, .systemPink, .systemGreen,
         .systemOrange, .systemPurple, .systemBlue, .white,
     ]
+
+    /// A colour from the list that is not the one showing. Without the
+    /// exclusion a bounce lands on the same colour one time in eight and reads
+    /// as a missed frame rather than as a bounce.
+    private func nextLogoColour() -> NSColor {
+        var index = Int.random(in: 0..<Self.logoColours.count)
+        if index == noticeColourIndex {
+            index = (index + 1 + Int.random(in: 0..<(Self.logoColours.count - 1)))
+                % Self.logoColours.count
+        }
+        noticeColourIndex = index
+        return Self.logoColours[index]
+    }
 
     /// The logo's height, as a fraction of the display's short edge, so it is
     /// the same size on a laptop and a 5K panel.
@@ -978,7 +995,7 @@ final class VideoStage: NSView {
         guard noticeLink == nil else { return }
         if logo == nil {
             let view = DVDLogo(frame: .zero)
-            view.tint = Self.logoColours[0]
+            view.tint = nextLogoColour()
             addSubview(view)
             keepVideoBehind()
             logo = view
@@ -1013,10 +1030,7 @@ final class VideoStage: NSView {
         let elapsed = min(now - last, Self.longestDriftStep)
         let size = logoSize()
         let bounce = drift.step(elapsed, in: bounds, size: size)
-        if !bounce.isEmpty {
-            noticeColourIndex = (noticeColourIndex + bounce.edges) % Self.logoColours.count
-            logo.tint = Self.logoColours[noticeColourIndex]
-        }
+        if !bounce.isEmpty { logo.tint = nextLogoColour() }
         noticeDrift = drift
         logo.frame = CGRect(origin: drift.origin, size: size)
         if bounce.isCorner { celebrateCorner() }
