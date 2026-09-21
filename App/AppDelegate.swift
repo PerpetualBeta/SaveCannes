@@ -66,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// well past our threshold).
     private var activationAllowedAfter: Date = .distantPast
     private var wakeObservers: [NSObjectProtocol] = []
+    /// When the current activation's windows were shown, or `nil` while
+    /// dismissed. Compared against `maxRuntimeMinutes` in `tick()`.
+    private var activatedAt: Date?
+    /// Set when the max-runtime auto-stop fires; blocks the idle-tick from
+    /// reactivating. An idle Mac's `systemIdleSeconds()` stays above
+    /// threshold forever with nobody there to reset it, so without this the
+    /// very next tick would show the windows straight back up — exactly the
+    /// unattended-for-hours case the timeout exists to stop. Cleared the
+    /// moment real input is observed (`tick()`) or an explicit activation is
+    /// requested (`activateNow`), both real "someone's here" signals that a
+    /// timer alone can't be.
+    private var autoStopSuppressed = false
 
     private var statusItem: StatusItem?
     private var statusItemVisibilityObserver: NSObjectProtocol?
@@ -94,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let registeredDefaults: [String: Any] = [
         "idleMinutes":               5,
         "activationSuspended":       false,
+        "maxRuntimeMinutes":         0,
         "playbackOrder":             PlaybackOrder.random.rawValue,
         "videoScaling":              VideoScaling.fullScreen.rawValue,
         "soundEnabled":              false,
@@ -119,6 +132,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var activationSuspended: Bool {
         UserDefaults.standard.bool(forKey: "activationSuspended")
     }
+    /// How long a single activation may keep playing before it auto-stops, to
+    /// bound CPU/GPU use if the Mac is left running unattended for hours or
+    /// days. `0` disables it — the historical, still-default behaviour.
+    private var maxRuntimeSeconds: Double {
+        Double(UserDefaults.standard.integer(forKey: "maxRuntimeMinutes")) * 60
+    }
     private var lockOnDismiss: Bool {
         UserDefaults.standard.bool(forKey: "lockOnDismiss")
     }
@@ -139,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
         installEditMenu()
-        scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s"
+        scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s, max runtime \(maxRuntimeSeconds > 0 ? "\(Int(maxRuntimeSeconds / 60))min" : "unlimited")"
               + (activationSuspended ? ", activation SUSPENDED from a previous session" : ""))
         // Whether this process is trusted, recorded at launch. Worth having: the answer
         // is per *process*, not just per app, and a process that has had the permission
@@ -363,6 +382,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func tick() {
         let idle = systemIdleSeconds()
+        // Real input — the only thing that can mean "someone's actually
+        // here" — lifts the max-runtime suppression regardless of whether
+        // the windows are currently up.
+        if idle < 1.0 && autoStopSuppressed {
+            autoStopSuppressed = false
+            scLog("real input observed — max-runtime suppression lifted")
+        }
         if windows.isEmpty {
             // Checked first and unconditionally: unlike the lock/display-wake
             // checks below, this isn't the app noticing something about the
@@ -371,7 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the transition, and this would otherwise repeat every second
             // for as long as it's set.
             guard !activationSuspended else { return }
-            if idle >= idleThresholdSeconds && Date() >= activationAllowedAfter {
+            if !autoStopSuppressed && idle >= idleThresholdSeconds && Date() >= activationAllowedAfter {
                 // Never start behind a lock screen. loginwindow sits above the
                 // saver level, so nothing would be visible: the app would decode
                 // video for an audience of nobody until someone came back.
@@ -412,6 +438,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if idle < 1.0 && Date() >= dismissAllowedAfter {
             scLog("system idle dropped — dismissing")
             dismissWindows(triggerLock: lockOnDismiss)
+        } else if maxRuntimeSeconds > 0, let activatedAt,
+                  Date().timeIntervalSince(activatedAt) >= maxRuntimeSeconds {
+            scLog("max runtime (\(Int(maxRuntimeSeconds / 60))min) reached — stopping, will not auto-restart until real input")
+            autoStopSuppressed = true
+            dismissWindows(triggerLock: lockOnDismiss)
         }
     }
 
@@ -423,6 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window management
 
     private func showWindows() {
+        activatedAt = Date()
         // Suppress idle-driven auto-dismiss briefly after activation. Without
         // this, hotkey/menu activations would be killed by their own user
         // input — the keypress that triggered activation also resets system
@@ -575,6 +607,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Clear the re-entry guard so the next dismiss cycle can lock again.
         lockDismissInProgress = false
         builtForLayout = nil
+        // Also resets the max-runtime clock. `handleScreenChange` tears down
+        // and immediately rebuilds on an actual display change, so a runtime
+        // limit restarts there too — an acceptable inaccuracy for a rare,
+        // transient event, and simpler than threading "this is a rebuild,
+        // not a new activation" through the dismiss path.
+        activatedAt = nil
         scLog("dismissed screensaver windows")
     }
 
@@ -673,6 +711,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func activateNow(source: String) {
         guard windows.isEmpty else { return }
+        // An explicit request is itself proof someone's here, regardless of
+        // an earlier max-runtime auto-stop.
+        autoStopSuppressed = false
         scLog("activate-now from \(source)")
         showWindows()
     }

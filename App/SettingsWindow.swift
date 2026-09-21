@@ -32,6 +32,7 @@ struct SaveCannesSettingsContent: View {
     @AppStorage("titleRepeatMinutes") private var titleRepeatMinutes: Int = 5
     @AppStorage("idleMinutes")    private var idleMinutes: Int = 5
     @AppStorage("activationSuspended") private var activationSuspended: Bool = false
+    @AppStorage("maxRuntimeMinutes") private var maxRuntimeMinutes: Int = 0
     @AppStorage("lockOnDismiss")  private var lockOnDismiss: Bool = false
 
     /// The registered sources, held in view state so the list reorders and
@@ -354,6 +355,18 @@ struct SaveCannesSettingsContent: View {
                 Text(L10n.string("settings.minutes", defaultValue: "minutes"))
                 Spacer()
             }
+            HStack {
+                Text(L10n.string("settings.max_runtime", defaultValue: "Stop after:"))
+                TextField("", value: $maxRuntimeMinutes, formatter: Self.minutes(min: 0, max: 1440))
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                Text(L10n.string("settings.minutes", defaultValue: "minutes"))
+                Spacer()
+            }
+            Text(L10n.string("settings.max_runtime_note",
+                             defaultValue: "0 = never. Otherwise, a single activation stops itself after this long — same as dismissing by hand, locking the screen first if that's turned on below — and won't start itself back up until you touch the Mac. A safeguard against playing for hours or days if nobody's there to dismiss it."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             ShortcutRow(label: L10n.string("settings.play_now", defaultValue: "Play now:"),
                         slot: .activate)
         }
