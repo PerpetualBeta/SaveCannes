@@ -11,6 +11,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var idleTimer: Timer?
     private var windows: [ScreensaverWindow] = []
+
+    /// Named once rather than spelled at each use — it is matched against a
+    /// notification name as well as observed, and two spellings of the same
+    /// string is how that kind of check silently stops matching.
+    static let screenIsUnlockedNotification = "com.apple.screenIsUnlocked"
+
+    /// Whether waking should LOCK the screen rather than merely dismiss.
+    ///
+    /// Pure, because it decides a security behaviour and that should be
+    /// checkable without a machine to put to sleep. All four must hold: it is a
+    /// wake and not an unlock; the user asked for lock-on-dismiss; the saver is
+    /// actually up, so waking a Mac we were not covering never locks it; and
+    /// the screen is not already locked.
+    static func shouldLockOnWake(notification: String,
+                                 lockOnDismiss: Bool,
+                                 saverIsUp: Bool,
+                                 screenAlreadyLocked: Bool) -> Bool {
+        notification != screenIsUnlockedNotification
+            && lockOnDismiss
+            && saverIsUp
+            && !screenAlreadyLocked
+    }
+
+    /// Set while activation is being held back by a locked screen, so the
+    /// reason is logged once per lock rather than on every tick.
+    private var activationHeldByLock = false
     private var screenChangeObserver: NSObjectProtocol?
     /// Signature of the display layout the live windows were built for.
     /// `nil` when no windows exist. See `handleScreenChange`.
@@ -190,13 +216,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ws = NSWorkspace.shared.notificationCenter
         let dn = DistributedNotificationCenter.default()
 
-        let onWake: (Notification) -> Void = { [weak self] _ in
+        // Named in the log, because three different notifications share this
+        // closure and one message for three causes is what made the original
+        // diagnosis a fortnight of log-reading.
+        let onWake: (Notification) -> Void = { [weak self] note in
             guard let self = self else { return }
             self.activationAllowedAfter = Date().addingTimeInterval(Self.wakeGraceSeconds)
-            scLog("wake/unlock event — activation suppressed for \(Int(Self.wakeGraceSeconds))s")
-            // Also dismiss any saver windows that may already be up (e.g. the
-            // system displayed the lock screen above an active session).
-            self.dismissWindows(triggerLock: false)
+            scLog("wake/unlock event (\(note.name.rawValue)) — activation suppressed for \(Int(Self.wakeGraceSeconds))s")
+            // The three notifications do NOT mean the same thing. An unlock
+            // means the user has just authenticated. A wake means the machine
+            // came back with the saver still up — and if lock-on-dismiss is on,
+            // the screen must not be handed back unlocked. macOS usually has it
+            // covered, but only because the screen-lock delay happens to be
+            // immediate, which is a System Settings value this app does not own.
+            let mustLock = Self.shouldLockOnWake(
+                notification: note.name.rawValue,
+                lockOnDismiss: self.lockOnDismiss,
+                saverIsUp: !self.windows.isEmpty,
+                screenAlreadyLocked: LockScreen.screenIsLocked)
+            if mustLock {
+                scLog("woke with the saver up and the screen UNLOCKED — locking, not just dismissing")
+            }
+            self.dismissWindows(triggerLock: mustLock)
         }
 
         wakeObservers.append(ws.addObserver(
@@ -206,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main,
             using: onWake))
         wakeObservers.append(dn.addObserver(
-            forName: Notification.Name("com.apple.screenIsUnlocked"),
+            forName: Notification.Name(Self.screenIsUnlockedNotification),
             object: nil, queue: .main, using: onWake))
     }
 
@@ -295,6 +336,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let idle = systemIdleSeconds()
         if windows.isEmpty {
             if idle >= idleThresholdSeconds && Date() >= activationAllowedAfter {
+                // Never start behind a lock screen. loginwindow sits above the
+                // saver level, so nothing would be visible: the app would decode
+                // video for an audience of nobody until someone came back.
+                // There was no guard here at all.
+                if LockScreen.screenIsLocked {
+                    if !activationHeldByLock {
+                        scLog("idle threshold reached but the screen is locked — not activating")
+                        activationHeldByLock = true
+                    }
+                    return
+                }
+                activationHeldByLock = false
                 scLog("idle=\(Int(idle))s ≥ threshold — activating")
                 showWindows()
             }
@@ -402,6 +455,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var lockObserver: NSObjectProtocol?
     private func observeLockThenPause() {
+        // Nothing to wait for if the screen is already locked. macOS locks the
+        // session itself when the display sleeps, so a saver dismissed after
+        // that is dismissed onto an already-locked session: the lock call
+        // succeeds at doing nothing, and no transition means no notification
+        // will ever arrive. Waiting the full timeout and then declaring failure
+        // is what the log did for four months.
+        if LockScreen.screenIsLocked {
+            scLog("screen already locked before the request — pausing, no handshake needed")
+            for win in windows { win.pauseAnimation() }
+            return
+        }
         let center = DistributedNotificationCenter.default()
         // Idempotent — clear any stale observer from a previous cycle.
         if let prev = lockObserver { center.removeObserver(prev); lockObserver = nil }
@@ -421,9 +485,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // lock UI over it. Fall back to a normal teardown.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.lockConfirmTimeoutSeconds) { [weak self] in
             guard let self = self, self.lockObserver != nil else { return }
-            scLog("screenIsLocked timeout — lock likely failed, tearing down")
             self.cleanupLockObserver()
-            self.tearDownWindows()
+            // Ask, do not assume. The old line read "lock likely failed", which
+            // the app had no way of knowing: all it had observed was a
+            // notification that did not arrive. Those are different facts, and
+            // conflating them sent three investigations down the wrong road.
+            if LockScreen.screenIsLocked {
+                scLog("no screenIsLocked in time, but the screen IS locked — pausing")
+                for win in self.windows { win.pauseAnimation() }
+            } else {
+                scLog("no screenIsLocked in time and the screen is NOT locked — tearing down")
+                self.tearDownWindows()
+            }
         }
     }
 
@@ -435,6 +508,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func tearDownWindows() {
+        // A teardown ends the dismiss this handshake belonged to, so the
+        // observer has nothing left to hear. Leaving it armed let a wake
+        // arriving mid-handshake orphan it rather than cancel it.
+        cleanupLockObserver()
         for win in windows { win.deactivate() }
         windows.removeAll()
         // Clear the re-entry guard so the next dismiss cycle can lock again.
