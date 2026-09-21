@@ -51,33 +51,29 @@ struct SaveCannesSettingsContent: View {
     /// change, so the per-display section stays in sync while it is open.
     @State private var connectedDisplays: [ConnectedDisplay] = []
 
-    /// Watches whether this build is trusted for Accessibility. Shared with the rest of
-    /// the suite — see `JorvikPermissionWatcher`, which carries the reasoning.
-    @StateObject private var accessibility = JorvikPermissionWatcher.accessibility()
-
+    // There is no Permissions section for Accessibility, and that is deliberate.
+    //
+    // This window used to carry one, captioned "Accessibility is required to
+    // lock the screen when the saver dismisses." It is not. The lock is a
+    // `SACLockScreenImmediate` call into loginwindow, which asks for nothing —
+    // proved on the sibling saver by revoking the grant and watching the screen
+    // lock 190ms later.
+    //
+    // One path would genuinely have used it: `JorvikShortcutRecorder` installs
+    // a global key monitor while recording a shortcut, as a fallback to its
+    // local one. Without the grant that fallback silently never fires, and
+    // recording still works — you clicked the field, so this app is frontmost
+    // and the local monitor has the keystroke. A marginal fallback is not worth
+    // putting a Grant Access button in front of someone for the right to read
+    // input across every other application on their Mac.
+    //
+    // Removed rather than reworded, because the caption was not merely wrong:
+    // it is what obtained the privilege. It asserted a requirement and put a
+    // button beside the assertion.
+    //
+    // File access is different and still requested, by the folder picker, at
+    // the moment you pick a folder. That one is real and the README says so.
     var body: some View {
-        Section(L10n.string("settings.permissions", defaultValue: "Permissions")) {
-            HStack {
-                Text(L10n.string("settings.accessibility", defaultValue: "Accessibility"))
-                Spacer()
-                if accessibility.isGranted {
-                    Label(L10n.string("settings.granted", defaultValue: "Granted"),
-                          systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.caption)
-                } else {
-                    Button(L10n.string("settings.grant_access", defaultValue: "Grant Access")) {
-                        JorvikPermissionWatcher.promptForAccessibility()
-                    }
-                    .font(.caption)
-                }
-            }
-            Text(L10n.string("settings.accessibility_why",
-                             defaultValue: "Accessibility is required to lock the screen when the saver dismisses."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-
         MenuBarVisibilitySettings()
 
         Section(L10n.string("settings.sources", defaultValue: "Sources")) {
@@ -362,8 +358,7 @@ struct SaveCannesSettingsContent: View {
                 .foregroundStyle(.secondary)
         }
         .onAppear {
-            scLog("settings opened; accessibility "
-                  + (AXIsProcessTrusted() ? "granted" : "NOT granted") + " for this build")
+            scLog("settings opened")
             refreshConnectedDisplays()
             recount()
         }

@@ -54,7 +54,6 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 
 Click the menu bar icon → **Settings…** for:
 
-- **Permissions** — accessibility status (required only if you enable Lock Screen on dismiss)
 - **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
 - **Playback** — order, and sound
 - **Display** — how each video is fitted to the screen, whether every display shows the same one, and optional source/fitting choices for each physical display
