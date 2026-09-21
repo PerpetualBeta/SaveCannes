@@ -624,6 +624,14 @@ private struct ShortcutRow: View {
                 // AppDelegate listens for this and re-registers the Carbon
                 // hotkeys, so a new binding is live without a relaunch.
                 NotificationCenter.default.post(name: .jorvikShortcutChanged, object: nil)
+            },
+            onRecordingChanged: { recording in
+                // Carbon consumes a registered hotkey before the recorder sees
+                // it, so the current shortcut would fire the action instead of
+                // being recorded. AppDelegate takes the hotkeys down meanwhile.
+                NotificationCenter.default.post(name: .jorvikShortcutRecordingChanged,
+                                                object: nil,
+                                                userInfo: ["recording": recording])
             }
         )
     }

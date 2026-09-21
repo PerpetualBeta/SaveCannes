@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `nil` when no windows exist. See `handleScreenChange`.
     private var builtForLayout: String?
     private var shortcutObserver: NSObjectProtocol?
+    private var recordingObserver: NSObjectProtocol?
     /// Earliest moment the idle-tick is allowed to dismiss after an
     /// activation. Activating via hotkey (or status-menu click) is itself
     /// recent user input, so the immediate next idle reading would be ~0
@@ -144,6 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: .jorvikShortcutChanged, object: nil, queue: .main
         ) { [weak self] _ in
             self?.registerStoredHotkeys()
+        }
+        // While a recorder is listening the hotkeys come down, or Carbon fires
+        // the action on the shortcut being recorded and the recorder never sees
+        // the keystroke at all.
+        recordingObserver = NotificationCenter.default.addObserver(
+            forName: .jorvikShortcutRecordingChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            let recording = note.userInfo?["recording"] as? Bool ?? false
+            self?.hotkeyManager.setRecordingSuspended(recording)
         }
         startIdlePolling()
         // Re-evaluate windows when displays connect/disconnect/reconfigure
