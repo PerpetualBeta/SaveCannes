@@ -595,12 +595,12 @@ struct SaveCannesSettingsContent: View {
 private struct ShortcutRow: View {
 
     let label: String
-    let slot: HotkeyManager.Slot
+    let slot: JorvikHotkeyManager.Slot
 
     @AppStorage private var keyCode: Int
     @AppStorage private var modifiers: Int
 
-    init(label: String, slot: HotkeyManager.Slot) {
+    init(label: String, slot: JorvikHotkeyManager.Slot) {
         self.label = label
         self.slot = slot
         _keyCode = AppStorage(wrappedValue: 0, slot.keyCodeKey)

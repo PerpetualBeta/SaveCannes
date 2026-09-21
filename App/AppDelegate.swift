@@ -59,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: StatusItem?
     private var statusItemVisibilityObserver: NSObjectProtocol?
-    private var hotkeyManager = HotkeyManager()
+    private var hotkeyManager = JorvikHotkeyManager(signature: JorvikHotkeyManager.saveCannesSignature)
 
     // Sparkle update controller. Owns the SPUStandardUpdaterController —
     // created lazily so initial-launch performance isn't affected.
@@ -322,7 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Hotkeys
 
     private func registerStoredHotkeys() {
-        for slot in HotkeyManager.Slot.allCases {
+        for slot in JorvikHotkeyManager.Slot.allCases {
             let binding = HotkeyBinding.read(slot)
             hotkeyManager.register(binding, slot: slot) { [weak self] in
                 switch slot {

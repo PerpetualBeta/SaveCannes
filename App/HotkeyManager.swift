@@ -1,15 +1,16 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Registers global hotkeys via Carbon's `RegisterEventHotKey`. Carbon is
-/// still the only documented path to a system-wide hotkey from an app that
-/// isn't an accessibility client, so the Swift surface stays small and wraps
-/// it cleanly.
+/// Save Cannes's hotkey slots and storage, over the shared
+/// `JorvikHotkeyManager`.
 ///
-/// Single instance owned by AppDelegate. Call `register(_:slot:handler:)` to
-/// install a binding for a slot; calling again with the same slot replaces.
-/// An unset binding removes.
-final class HotkeyManager {
+/// The Carbon plumbing used to live here, and in four other apps, as five
+/// hand-maintained copies of the same file. It now lives in JorvikKit; what
+/// stays here is the part that is genuinely this app's: which slots exist, the
+/// four-character signature that keeps its registrations distinct from its
+/// siblings', and the fact that this app stores a shortcut as a pair of
+/// UserDefaults ints rather than a `HotkeyConfig`.
+extension JorvikHotkeyManager {
 
     /// Slot identifiers, stable so re-registrations supersede cleanly. Each
     /// slot also names its own pair of UserDefaults keys, which is what the
@@ -28,111 +29,24 @@ final class HotkeyManager {
         var modifiersKey: String { "\(name)Modifiers" }
     }
 
-    private struct Registered {
-        let ref: EventHotKeyRef
-        let handler: () -> Void
-        /// Kept so a suspended hotkey can be registered again unchanged.
-        let binding: HotkeyBinding
-    }
-    private var slots: [Slot: Registered] = [:]
-    /// What was registered before recording suspended it.
-    private var suspendedSlots: [Slot: Registered] = [:]
-    private var eventHandler: EventHandlerRef?
+    /// 'SCNS'.
+    static let saveCannesSignature = OSType(0x53434E53)
 
-    init() {
-        installEventHandler()
-    }
-
-    deinit {
-        if let h = eventHandler { RemoveEventHandler(h) }
-        for (_, r) in slots { UnregisterEventHotKey(r.ref) }
-    }
-
-    /// Unregisters every hotkey while a shortcut recorder is listening, and
-    /// puts them back afterwards.
-    ///
-    /// Carbon hands a registered hotkey to its handler before the keystroke
-    /// reaches the app, so without this the shortcut already set fires the
-    /// action instead of being recorded — and can never be changed, because the
-    /// recorder never sees the keys.
-    func setRecordingSuspended(_ suspended: Bool) {
-        if suspended {
-            guard suspendedSlots.isEmpty else { return }
-            for (_, r) in slots { UnregisterEventHotKey(r.ref) }
-            suspendedSlots = slots
-            slots = [:]
-        } else {
-            let restore = suspendedSlots
-            suspendedSlots = [:]
-            for (slot, r) in restore { register(r.binding, slot: slot, handler: r.handler) }
-        }
-    }
-
+    /// Registers from a stored binding. An unset binding removes the slot.
     func register(_ binding: HotkeyBinding, slot: Slot, handler: @escaping () -> Void) {
-        // Remove any previous registration for this slot first.
-        if let prev = slots.removeValue(forKey: slot) {
-            UnregisterEventHotKey(prev.ref)
-        }
-        guard !binding.isUnset else { return }
-
-        var hotKeyRef: EventHotKeyRef?
-        let hotKeyID = EventHotKeyID(signature: OSType(0x53434E53),  // 'SCNS'
-                                     id: slot.rawValue)
-        let status = RegisterEventHotKey(UInt32(binding.keyCode),
-                                        carbonModifiers(from: binding.modifiers),
-                                        hotKeyID,
-                                        GetEventDispatcherTarget(),
-                                        0,
-                                        &hotKeyRef)
-        guard status == noErr, let ref = hotKeyRef else {
-            scLog("HotkeyManager: register failed status=\(status) slot=\(slot.name)")
+        guard !binding.isUnset else {
+            unregister(slot: slot.rawValue)
             return
         }
-        slots[slot] = Registered(ref: ref, handler: handler, binding: binding)
-        scLog("HotkeyManager: registered \(slot.name) → \(binding.displayString)")
-    }
-
-    // MARK: - Carbon plumbing
-
-    private func installEventHandler() {
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                                 eventKind: UInt32(kEventHotKeyPressed))
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetEventDispatcherTarget(),
-                            { (_: EventHandlerCallRef?, event: EventRef?, userData: UnsafeMutableRawPointer?) in
-                                guard let event = event, let userData = userData else { return noErr }
-                                let me = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-                                var hkID = EventHotKeyID()
-                                GetEventParameter(event,
-                                                  EventParamName(kEventParamDirectObject),
-                                                  EventParamType(typeEventHotKeyID),
-                                                  nil,
-                                                  MemoryLayout<EventHotKeyID>.size,
-                                                  nil,
-                                                  &hkID)
-                                if let slot = Slot(rawValue: hkID.id),
-                                   let reg = me.slots[slot] {
-                                    DispatchQueue.main.async { reg.handler() }
-                                }
-                                return noErr
-                            },
-                            1,
-                            &spec,
-                            context,
-                            &eventHandler)
-    }
-
-    private func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
-        var m: UInt32 = 0
-        if flags.contains(.command) { m |= UInt32(cmdKey) }
-        if flags.contains(.option)  { m |= UInt32(optionKey) }
-        if flags.contains(.control) { m |= UInt32(controlKey) }
-        if flags.contains(.shift)   { m |= UInt32(shiftKey) }
-        return m
+        register(keyCode: binding.keyCode,
+                 modifiers: binding.modifiers,
+                 slot: slot.rawValue,
+                 handler: handler)
     }
 }
 
-/// One slot's persisted shortcut.
+/// One slot's persisted shortcut: a key code and a modifier set, in two
+/// UserDefaults ints.
 ///
 /// Emptiness is tested on the modifier set, never on the key code: key code 0
 /// is a real key ("A"), so a zero there means nothing. `JorvikShortcutRecorder`
@@ -148,7 +62,7 @@ struct HotkeyBinding {
         isUnset ? "" : JorvikShortcutPanel.displayString(keyCode: keyCode, modifiers: modifiers)
     }
 
-    static func read(_ slot: HotkeyManager.Slot) -> HotkeyBinding {
+    static func read(_ slot: JorvikHotkeyManager.Slot) -> HotkeyBinding {
         let defs = UserDefaults.standard
         return HotkeyBinding(
             keyCode: UInt16(truncatingIfNeeded: defs.integer(forKey: slot.keyCodeKey)),
