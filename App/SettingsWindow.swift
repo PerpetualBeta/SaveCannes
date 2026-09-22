@@ -625,6 +625,16 @@ private struct ShortcutRow: View {
                 // hotkeys, so a new binding is live without a relaunch.
                 NotificationCenter.default.post(name: .jorvikShortcutChanged, object: nil)
             },
+            onClear: {
+                // Without this the recorder draws no Clear button at all, so a
+                // shortcut could be changed but never removed. Issue #11.
+                // Zeroing both halves is what `HotkeyBinding.isUnset` reads as
+                // unset, and the same notification takes the Carbon
+                // registration down.
+                keyCode = 0
+                modifiers = 0
+                NotificationCenter.default.post(name: .jorvikShortcutChanged, object: nil)
+            },
             onRecordingChanged: { recording in
                 // Carbon consumes a registered hotkey before the recorder sees
                 // it, so the current shortcut would fire the action instead of
