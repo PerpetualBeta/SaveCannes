@@ -41,6 +41,7 @@ SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift \
                     App/StatusItem.swift App/SettingsWindow.swift \
                     App/HotkeyManager.swift \
                     App/LockScreen.swift App/Screenshot.swift \
+                    App/DisplayWake.swift \
                     App/Log.swift \
                     $(wildcard App/JorvikKit/*.swift)
 

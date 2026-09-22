@@ -37,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set while activation is being held back by a locked screen, so the
     /// reason is logged once per lock rather than on every tick.
     private var activationHeldByLock = false
+    /// Mirrors `activationHeldByLock`, for the case where another app is
+    /// deliberately keeping the display awake. See `DisplayWake`.
+    private var activationHeldByAssertion = false
     private var screenChangeObserver: NSObjectProtocol?
     /// Signature of the display layout the live windows were built for.
     /// `nil` when no windows exist. See `handleScreenChange`.
@@ -357,6 +360,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 activationHeldByLock = false
+
+                // Something else is asking macOS to keep the display on: a
+                // video call, a film, a presentation. Idle time says nobody has
+                // touched the keyboard, and that is exactly what watching
+                // something looks like.
+                if DisplayWake.somethingIsHoldingTheDisplayAwake {
+                    if !activationHeldByAssertion {
+                        scLog("idle threshold reached but something is holding the display awake — not activating")
+                        activationHeldByAssertion = true
+                    }
+                    // Restart the countdown rather than merely skipping this
+                    // tick. Idle has been climbing all through the call, so
+                    // without this the saver would appear the instant the call
+                    // ended, which is the moment it is least wanted.
+                    activationAllowedAfter = Date().addingTimeInterval(idleThresholdSeconds)
+                    return
+                }
+                if activationHeldByAssertion {
+                    scLog("display assertion released — idle countdown restarted")
+                    activationHeldByAssertion = false
+                }
+
                 scLog("idle=\(Int(idle))s ≥ threshold — activating")
                 showWindows()
             }
