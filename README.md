@@ -42,6 +42,8 @@ As a regular app it gets out of its own way: it asks for your folder, plays from
 
 When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss.
 
+It won't start while something else is deliberately keeping the display awake. A video call, a film, a presentation: all of them hold a power assertion that macOS honours, and Save Cannes now honours it too. Sitting still through a call looks exactly like an empty desk if you only measure the keyboard. When the call ends, the idle countdown starts again from zero rather than firing the moment it finishes.
+
 - **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
@@ -59,7 +61,7 @@ Click the menu bar icon → **Settings…** for:
 - **Display** — how each video is fitted to the screen, whether every display shows the same one, and optional source/fitting choices for each physical display
 - **Photos** — whether photos play, and how long each is held
 - **Titles** — whether the title of what's playing appears on screen, and how often
-- **Activation** — idle timeout in minutes, and a global "Play now" hotkey
+- **Activation** — idle timeout in minutes, and a global "Play now" hotkey. A shortcut can be cleared as well as changed
 - **On dismiss** — toggle to lock the screen automatically when the saver dismisses
 - **Capture** — global hotkey to save the current frame to `~/Pictures/Save Cannes/`
 - **Show icon in menu bar** — hide the film-strip status icon while Save Cannes keeps running (playback is unaffected). Your choice persists across launches, including login auto-start. *Shown only on macOS 14–15 — on macOS 26 (Tahoe) and later, use System Settings → Menu Bar, which provides this natively.*
