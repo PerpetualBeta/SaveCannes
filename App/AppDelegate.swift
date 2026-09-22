@@ -3,6 +3,13 @@ import CoreGraphics
 import ServiceManagement
 import Sparkle
 
+extension Notification.Name {
+    /// Posted whenever `activationSuspended` changes, from either the status
+    /// menu or the Settings toggle, so the status icon stays honest about
+    /// which one is true regardless of which one changed it.
+    static let activationSuspendedChanged = Notification.Name("SaveCannesActivationSuspendedChanged")
+}
+
 /// App lifecycle + idle-driven screensaver window controller. Also owns the
 /// status item, settings window, and hotkey infrastructure.
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -86,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// agree on purpose rather than by coincidence.
     private static let registeredDefaults: [String: Any] = [
         "idleMinutes":               5,
+        "activationSuspended":       false,
         "playbackOrder":             PlaybackOrder.random.rawValue,
         "videoScaling":              VideoScaling.fullScreen.rawValue,
         "soundEnabled":              false,
@@ -102,6 +110,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var idleThresholdSeconds: Double {
         Double(UserDefaults.standard.integer(forKey: "idleMinutes")) * 60
+    }
+    /// User-requested "don't activate on idle right now" — distinct from
+    /// every other reason activation might be held back (a lock, a call):
+    /// those are the app noticing something about the world, this is someone
+    /// explicitly asking. Play Now still works regardless; only the idle
+    /// tick checks this.
+    private var activationSuspended: Bool {
+        UserDefaults.standard.bool(forKey: "activationSuspended")
     }
     private var lockOnDismiss: Bool {
         UserDefaults.standard.bool(forKey: "lockOnDismiss")
@@ -123,7 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
         installEditMenu()
-        scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s")
+        scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s"
+              + (activationSuspended ? ", activation SUSPENDED from a previous session" : ""))
         // Whether this process is trusted, recorded at launch. Worth having: the answer
         // is per *process*, not just per app, and a process that has had the permission
         // revoked under it cannot regain it — so "the switch is on but the app disagrees"
@@ -347,6 +364,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func tick() {
         let idle = systemIdleSeconds()
         if windows.isEmpty {
+            // Checked first and unconditionally: unlike the lock/display-wake
+            // checks below, this isn't the app noticing something about the
+            // world, it's someone having explicitly asked not to be
+            // interrupted. No log line here — the toggle itself already logs
+            // the transition, and this would otherwise repeat every second
+            // for as long as it's set.
+            guard !activationSuspended else { return }
             if idle >= idleThresholdSeconds && Date() >= activationAllowedAfter {
                 // Never start behind a lock screen. loginwindow sits above the
                 // saver level, so nothing would be visible: the app would decode
@@ -651,6 +675,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard windows.isEmpty else { return }
         scLog("activate-now from \(source)")
         showWindows()
+    }
+
+    /// For the status menu's label/icon and the Settings toggle to read
+    /// without either owning the storage key directly.
+    func isActivationSuspended() -> Bool {
+        activationSuspended
+    }
+
+    /// Flips `activationSuspended`. The Settings toggle writes the same
+    /// UserDefaults key directly (via `@AppStorage`) rather than calling
+    /// this, but both paths post `.activationSuspendedChanged` so the status
+    /// icon stays correct regardless of which one changed it.
+    func toggleActivationSuspended() {
+        let suspended = !activationSuspended
+        UserDefaults.standard.set(suspended, forKey: "activationSuspended")
+        scLog(suspended ? "activation suspended from status menu" : "activation resumed from status menu")
+        NotificationCenter.default.post(name: .activationSuspendedChanged, object: nil)
     }
 
     func openSettings() {
