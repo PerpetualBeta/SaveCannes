@@ -64,7 +64,7 @@ Click the menu bar icon → **Settings…** for:
 - **Photos** — whether photos play, and how long each is held
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, a global "Play now" hotkey (a shortcut can be cleared as well as changed), and a "Suspended" toggle that mirrors the menu bar's Suspend/Resume item
-- **On dismiss** — toggle to lock the screen automatically when the saver dismisses
+- **Dismiss** — an "Auto dismiss after" timeout in minutes (0 = never) so a single activation can't run unattended for hours or days, and a toggle to lock the screen automatically when the saver dismisses
 - **Capture** — global hotkey to save the current frame to `~/Pictures/Save Cannes/`
 - **Show icon in menu bar** — hide the film-strip status icon while Save Cannes keeps running (playback is unaffected). Your choice persists across launches, including login auto-start. *Shown only on macOS 14–15 — on macOS 26 (Tahoe) and later, use System Settings → Menu Bar, which provides this natively.*
 - **General** — Launch at Login
@@ -319,6 +319,8 @@ Other targets:
 **The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
 
 **I don't want it to activate for a while.** Click the menu bar icon and choose **Suspend** — the icon changes to show it's off, and it stays that way, even across a relaunch, until you choose **Resume**. **Play Now** — from the menu or its keyboard shortcut — still triggers the saver regardless.
+
+**It's been running for hours and nobody's there.** Set Settings → Dismiss → "Auto dismiss after" to a number of minutes: a single activation then dismisses itself after that long — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac. With "Lock screen when dismissed" on, this stops decoding and playback immediately, which is most of what you're after — but the player itself isn't fully released until the Mac is actually unlocked, same as a manual dismiss with that toggle on.
 
 **No sound.** Check Settings → Playback, and note that with multiple displays the soundtrack plays on the main display's copy only.
 

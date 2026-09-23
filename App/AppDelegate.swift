@@ -66,6 +66,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// well past our threshold).
     private var activationAllowedAfter: Date = .distantPast
     private var wakeObservers: [NSObjectProtocol] = []
+    /// When the current activation's windows were shown, or `nil` while
+    /// dismissed. Compared against `autoDismissMinutes` in `tick()`.
+    private var activatedAt: Date?
+    /// Set when the auto-dismiss timeout fires; blocks the idle-tick from
+    /// reactivating. An idle Mac's `systemIdleSeconds()` stays above
+    /// threshold forever with nobody there to reset it, so without this the
+    /// very next tick would show the windows straight back up — exactly the
+    /// unattended-for-hours case the timeout exists to stop. Cleared the
+    /// moment real input is observed (`tick()`) or an explicit activation is
+    /// requested (`activateNow`), both real "someone's here" signals that a
+    /// timer alone can't be.
+    private var autoDismissSuppressed = false
+    /// Set the moment the auto-dismiss branch in `tick()` fires, so it can't
+    /// fire again on every subsequent tick while teardown is still pending.
+    /// With `lockOnDismiss` on, `dismissWindows(triggerLock:)` deliberately
+    /// defers actual teardown until unlock — `windows` stays non-empty and
+    /// `activatedAt` stays set for the whole time the Mac sits locked, so
+    /// without this the condition re-evaluates true every second for as long
+    /// as that takes, re-logging and re-calling `dismissWindows` (harmlessly
+    /// absorbed by `lockDismissInProgress`, but pure log spam — potentially
+    /// for hours). Reset in `tearDownWindows()`, alongside
+    /// `lockDismissInProgress`, which guards the same kind of re-entry one
+    /// level down.
+    private var autoDismissTriggered = false
 
     private var statusItem: StatusItem?
     private var statusItemVisibilityObserver: NSObjectProtocol?
@@ -94,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let registeredDefaults: [String: Any] = [
         "idleMinutes":               5,
         "activationSuspended":       false,
+        "autoDismissMinutes":        0,
         "playbackOrder":             PlaybackOrder.random.rawValue,
         "videoScaling":              VideoScaling.fullScreen.rawValue,
         "soundEnabled":              false,
@@ -119,6 +144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var activationSuspended: Bool {
         UserDefaults.standard.bool(forKey: "activationSuspended")
     }
+    /// How long a single activation may keep playing before it auto-stops, to
+    /// bound CPU/GPU use if the Mac is left running unattended for hours or
+    /// days. `0` disables it — the historical, still-default behaviour.
+    private var autoDismissSeconds: Double {
+        Double(UserDefaults.standard.integer(forKey: "autoDismissMinutes")) * 60
+    }
     private var lockOnDismiss: Bool {
         UserDefaults.standard.bool(forKey: "lockOnDismiss")
     }
@@ -139,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
         installEditMenu()
-        scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s"
+        scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s, auto dismiss \(autoDismissSeconds > 0 ? "\(Int(autoDismissSeconds / 60))min" : "unlimited")"
               + (activationSuspended ? ", activation SUSPENDED from a previous session" : ""))
         // Whether this process is trusted, recorded at launch. Worth having: the answer
         // is per *process*, not just per app, and a process that has had the permission
@@ -363,6 +394,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func tick() {
         let idle = systemIdleSeconds()
+        // Real input — the only thing that can mean "someone's actually
+        // here" — lifts the auto-dismiss suppression regardless of whether
+        // the windows are currently up.
+        if idle < 1.0 && autoDismissSuppressed {
+            autoDismissSuppressed = false
+            scLog("real input observed — auto-dismiss suppression lifted")
+        }
         if windows.isEmpty {
             // Checked first and unconditionally: unlike the lock/display-wake
             // checks below, this isn't the app noticing something about the
@@ -371,7 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the transition, and this would otherwise repeat every second
             // for as long as it's set.
             guard !activationSuspended else { return }
-            if idle >= idleThresholdSeconds && Date() >= activationAllowedAfter {
+            if !autoDismissSuppressed && idle >= idleThresholdSeconds && Date() >= activationAllowedAfter {
                 // Never start behind a lock screen. loginwindow sits above the
                 // saver level, so nothing would be visible: the app would decode
                 // video for an audience of nobody until someone came back.
@@ -412,6 +450,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if idle < 1.0 && Date() >= dismissAllowedAfter {
             scLog("system idle dropped — dismissing")
             dismissWindows(triggerLock: lockOnDismiss)
+        } else if !autoDismissTriggered, autoDismissSeconds > 0, let activatedAt,
+                  Date().timeIntervalSince(activatedAt) >= autoDismissSeconds {
+            scLog("auto dismiss (\(Int(autoDismissSeconds / 60))min) reached — stopping, will not auto-restart until real input")
+            autoDismissTriggered = true
+            autoDismissSuppressed = true
+            dismissWindows(triggerLock: lockOnDismiss)
         }
     }
 
@@ -423,6 +467,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window management
 
     private func showWindows() {
+        // Only start the clock on a genuine new activation. A rebuild
+        // (handleScreenChange, via tearDownWindows(isRebuild: true)) leaves
+        // activatedAt already set — preserve it rather than restarting the
+        // auto-dismiss timeout on a display-layout change mid-activation.
+        if activatedAt == nil { activatedAt = Date() }
         // Suppress idle-driven auto-dismiss briefly after activation. Without
         // this, hotkey/menu activations would be killed by their own user
         // input — the keypress that triggered activation also resets system
@@ -484,7 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// arm two observe-lock-then-pause cycles.
     private var lockDismissInProgress = false
 
-    private func dismissWindows(triggerLock: Bool) {
+    private func dismissWindows(triggerLock: Bool, isRebuild: Bool = false) {
         guard !windows.isEmpty else { return }
         if triggerLock {
             guard !lockDismissInProgress else {
@@ -507,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             observeLockThenPause()
             LockScreen.lock()
         } else {
-            tearDownWindows()
+            tearDownWindows(isRebuild: isRebuild)
         }
     }
 
@@ -565,16 +614,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func tearDownWindows() {
+    private func tearDownWindows(isRebuild: Bool = false) {
         // A teardown ends the dismiss this handshake belonged to, so the
         // observer has nothing left to hear. Leaving it armed let a wake
         // arriving mid-handshake orphan it rather than cancel it.
         cleanupLockObserver()
         for win in windows { win.deactivate() }
         windows.removeAll()
-        // Clear the re-entry guard so the next dismiss cycle can lock again.
+        // Clear the re-entry guards so the next dismiss cycle can lock again,
+        // and so a future auto-dismiss trigger can fire again.
         lockDismissInProgress = false
+        autoDismissTriggered = false
         builtForLayout = nil
+        // A rebuild (handleScreenChange tearing down only to immediately call
+        // showWindows() again on an actual display-layout change) is not a
+        // new activation — some DisplayPort setups drop a sleeping display
+        // out of NSScreen.screens entirely, which is exactly the event
+        // guaranteed to happen on the unattended-overnight Mac this timeout
+        // exists to bound. Restarting the clock there would silently defeat
+        // it. Only a genuine dismiss clears activatedAt; showWindows() only
+        // sets it when it finds nil, so a preserved value here survives the
+        // rebuild untouched.
+        if !isRebuild {
+            activatedAt = nil
+        }
         scLog("dismissed screensaver windows")
     }
 
@@ -644,7 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         scLog("display layout changed: \(builtForLayout ?? "none") → \(current) — recreating screensaver windows")
-        dismissWindows(triggerLock: false)
+        dismissWindows(triggerLock: false, isRebuild: true)
         showWindows()
     }
 
@@ -673,6 +736,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func activateNow(source: String) {
         guard windows.isEmpty else { return }
+        // An explicit request is itself proof someone's here, regardless of
+        // an earlier auto-dismiss.
+        autoDismissSuppressed = false
         scLog("activate-now from \(source)")
         showWindows()
     }
