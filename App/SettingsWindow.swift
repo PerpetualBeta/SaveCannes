@@ -189,45 +189,41 @@ struct SaveCannesSettingsContent: View {
         }
 
         Section(L10n.string("settings.playback", defaultValue: "Playback")) {
-            Picker(L10n.string("settings.order", defaultValue: "Order:"), selection: $order) {
-                Text(L10n.string("settings.order_random", defaultValue: "Random"))
-                    .tag(PlaybackOrder.random)
-                Text(L10n.string("settings.order_sequential", defaultValue: "Sequential, by source"))
-                    .tag(PlaybackOrder.sequential)
+            captioned(L10n.string("settings.order_note",
+                                 defaultValue: "Sequential plays each source in turn, in the order listed above, and each source's files in path order — so a folder of folders stays together. Random shuffles everything from every switched-on source.")) {
+                Picker(L10n.string("settings.order", defaultValue: "Order:"), selection: $order) {
+                    Text(L10n.string("settings.order_random", defaultValue: "Random"))
+                        .tag(PlaybackOrder.random)
+                    Text(L10n.string("settings.order_sequential", defaultValue: "Sequential, by source"))
+                        .tag(PlaybackOrder.sequential)
+                }
             }
-            Text(L10n.string("settings.order_note",
-                             defaultValue: "Sequential plays each source in turn, in the order listed above, and each source's files in path order — so a folder of folders stays together. Random shuffles everything from every switched-on source."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
-            Toggle(L10n.string("settings.sound", defaultValue: "Play sound"), isOn: $soundEnabled)
-            Text(L10n.string("settings.sound_note",
-                             defaultValue: "With more than one display, sound plays on the main one only. Each runs its own playback, so they would overlap."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            captioned(L10n.string("settings.sound_note",
+                                 defaultValue: "With more than one display, sound plays on the main one only. Each runs its own playback, so they would overlap.")) {
+                Toggle(L10n.string("settings.sound", defaultValue: "Play sound"), isOn: $soundEnabled)
+            }
         }
 
         Section(L10n.string("settings.display", defaultValue: "Display")) {
-            Picker(L10n.string("settings.size", defaultValue: "Size:"), selection: $scaling) {
-                Text(L10n.string("settings.size_full", defaultValue: "Full screen, cropped to fit"))
-                    .tag(VideoScaling.fullScreen)
-                Text(L10n.string("settings.size_fit", defaultValue: "Fit to screen, no cropping"))
-                    .tag(VideoScaling.fitToScreen)
-                Text(L10n.string("settings.size_original", defaultValue: "Original size"))
-                    .tag(VideoScaling.originalSize)
+            captioned(L10n.string("settings.size_note",
+                                 defaultValue: "Original size plays one video pixel to one screen pixel, centred on black. Anything bigger than the display is scaled down to fit.")) {
+                Picker(L10n.string("settings.size", defaultValue: "Size:"), selection: $scaling) {
+                    Text(L10n.string("settings.size_full", defaultValue: "Full screen, cropped to fit"))
+                        .tag(VideoScaling.fullScreen)
+                    Text(L10n.string("settings.size_fit", defaultValue: "Fit to screen, no cropping"))
+                        .tag(VideoScaling.fitToScreen)
+                    Text(L10n.string("settings.size_original", defaultValue: "Original size"))
+                        .tag(VideoScaling.originalSize)
+                }
             }
-            Text(L10n.string("settings.size_note",
-                             defaultValue: "Original size plays one video pixel to one screen pixel, centred on black. Anything bigger than the display is scaled down to fit."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
-            Toggle(L10n.string("settings.different_per_display",
-                               defaultValue: "Different video on each display"),
-                   isOn: differentPerDisplayBinding)
-                .disabled(!order.allowsDifferentVideoPerDisplay)
-            Text(differentPerDisplayNote)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            captioned(differentPerDisplayNote) {
+                Toggle(L10n.string("settings.different_per_display",
+                                   defaultValue: "Different video on each display"),
+                       isOn: differentPerDisplayBinding)
+                    .disabled(!order.allowsDifferentVideoPerDisplay)
+            }
 
             Divider()
 
@@ -290,13 +286,12 @@ struct SaveCannesSettingsContent: View {
         }
 
         Section(L10n.string("settings.photos", defaultValue: "Photos")) {
-            Toggle(L10n.string("settings.photos_enabled",
-                               defaultValue: "Play photos as well as videos"),
-                   isOn: $photosEnabled)
-            Text(L10n.string("settings.photos_note",
-                             defaultValue: "Any image a folder holds, JPEG, PNG, HEIC, TIFF or camera RAW, joins the playlist alongside the videos. Turn this off if your video folders hold cover art or posters you would rather not see. A file you pick by hand always plays, whichever kind it is."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            captioned(L10n.string("settings.photos_note",
+                                 defaultValue: "Any image a folder holds, JPEG, PNG, HEIC, TIFF or camera RAW, joins the playlist alongside the videos. Turn this off if your video folders hold cover art or posters you would rather not see. A file you pick by hand always plays, whichever kind it is.")) {
+                Toggle(L10n.string("settings.photos_enabled",
+                                   defaultValue: "Play photos as well as videos"),
+                       isOn: $photosEnabled)
+            }
 
             durationSetting(label: L10n.string("settings.photo_seconds", defaultValue: "Hold each photo for:"),
                              value: $photoSeconds, range: 2...600,
@@ -305,37 +300,35 @@ struct SaveCannesSettingsContent: View {
         }
 
         Section(L10n.string("settings.titles", defaultValue: "Titles")) {
-            Picker(L10n.string("settings.show_title", defaultValue: "Show title:"), selection: $titleMode) {
-                Text(L10n.string("settings.title_never", defaultValue: "Never"))
-                    .tag(TitleMode.never)
-                Text(L10n.string("settings.title_at_start", defaultValue: "As each video starts"))
-                    .tag(TitleMode.atStart)
-                Text(L10n.string("settings.title_repeatedly", defaultValue: "Repeatedly, while it plays"))
-                    .tag(TitleMode.repeatedly)
+            captioned(L10n.string("settings.title_note",
+                                  defaultValue: "The file's own title if it has one, otherwise its filename, low in the corner for a few seconds. A copyright line is shown underneath when the file carries one — a photo's IPTC or TIFF fields count.")) {
+                Picker(L10n.string("settings.show_title", defaultValue: "Show title:"), selection: $titleMode) {
+                    Text(L10n.string("settings.title_never", defaultValue: "Never"))
+                        .tag(TitleMode.never)
+                    Text(L10n.string("settings.title_at_start", defaultValue: "As each video starts"))
+                        .tag(TitleMode.atStart)
+                    Text(L10n.string("settings.title_repeatedly", defaultValue: "Repeatedly, while it plays"))
+                        .tag(TitleMode.repeatedly)
+                }
             }
             durationSetting(label: L10n.string("settings.title_repeat_every", defaultValue: "Repeat every:"),
                              value: $titleRepeatMinutes, range: 1...60,
                              unit: L10n.string("settings.minutes", defaultValue: "minutes"))
                 .disabled(titleMode != .repeatedly)
-            Text(L10n.string("settings.title_note",
-                             defaultValue: "The file's own title if it has one, otherwise its filename, low in the corner for a few seconds. A copyright line is shown underneath when the file carries one — a photo's IPTC or TIFF fields count."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
 
         Section(L10n.string("settings.activation", defaultValue: "Activation")) {
-            Toggle(L10n.string("settings.suspended", defaultValue: "Suspended"), isOn: $activationSuspended)
-                .onChange(of: activationSuspended) { _, _ in
-                    // Written directly above via @AppStorage, so the status
-                    // item — which owns no observer on the key itself —
-                    // needs telling explicitly to update its icon and menu
-                    // label.
-                    NotificationCenter.default.post(name: .activationSuspendedChanged, object: nil)
-                }
-            Text(L10n.string("settings.suspended_note",
-                             defaultValue: "While suspended, Save Cannes will not activate on its own when idle. Play Now still works, from this menu or its shortcut."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            captioned(L10n.string("settings.suspended_note",
+                                 defaultValue: "While suspended, Save Cannes will not activate on its own when idle. Play Now still works, from this menu or its shortcut.")) {
+                Toggle(L10n.string("settings.suspended", defaultValue: "Suspended"), isOn: $activationSuspended)
+                    .onChange(of: activationSuspended) { _, _ in
+                        // Written directly above via @AppStorage, so the status
+                        // item — which owns no observer on the key itself —
+                        // needs telling explicitly to update its icon and menu
+                        // label.
+                        NotificationCenter.default.post(name: .activationSuspendedChanged, object: nil)
+                    }
+            }
 
             durationSetting(label: L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"),
                              value: $idleMinutes, range: 1...1440,
@@ -345,24 +338,22 @@ struct SaveCannesSettingsContent: View {
         }
 
         Section(L10n.string("settings.dismiss", defaultValue: "Dismiss")) {
-            durationSetting(label: L10n.string("settings.auto_dismiss", defaultValue: "Auto dismiss after:"),
-                             value: $autoDismissMinutes, range: 0...1440,
-                             unit: L10n.string("settings.minutes", defaultValue: "minutes"))
-            Text(L10n.string("settings.auto_dismiss_note",
-                             defaultValue: "0 means never. Otherwise a single activation ends itself after this long, locking the screen first if that is turned on below, and will not start again until you touch the Mac. A safeguard against playing to an empty room all night."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            captioned(L10n.string("settings.auto_dismiss_note",
+                                 defaultValue: "0 means never. Otherwise a single activation ends itself after this long, locking the screen first if that is turned on below, and will not start again until you touch the Mac. A safeguard against playing to an empty room all night.")) {
+                durationSetting(label: L10n.string("settings.auto_dismiss", defaultValue: "Auto dismiss after:"),
+                                 value: $autoDismissMinutes, range: 0...1440,
+                                 unit: L10n.string("settings.minutes", defaultValue: "minutes"))
+            }
             Toggle(L10n.string("settings.lock_on_dismiss", defaultValue: "Lock screen when dismissed"),
                    isOn: $lockOnDismiss)
         }
 
         Section(L10n.string("settings.capture", defaultValue: "Capture")) {
-            ShortcutRow(label: L10n.string("settings.screenshot", defaultValue: "Screenshot:"),
-                        slot: .screenshot)
-            Text(L10n.string("settings.screenshot_note",
-                             defaultValue: "Saves what is on screen to ~/Pictures/Save Cannes/ — a video frame at the video's own resolution, or the photo at its full size."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            captioned(L10n.string("settings.screenshot_note",
+                                 defaultValue: "Saves what is on screen to ~/Pictures/Save Cannes/ — a video frame at the video's own resolution, or the photo at its full size.")) {
+                ShortcutRow(label: L10n.string("settings.screenshot", defaultValue: "Screenshot:"),
+                            slot: .screenshot)
+            }
         }
         .onAppear {
             scLog("settings opened")
@@ -616,6 +607,22 @@ struct SaveCannesSettingsContent: View {
     /// labels are. A fixed label column would line them up too, until the
     /// first translation: the longest English label here is 124pt and the
     /// German, French and Russian of the same strings all run past 150.
+    /// A control and the note that explains it, in ONE form row.
+    ///
+    /// Left as two sibling rows, a grouped Form draws a divider between the
+    /// control and its own caption, which reads as though the note belongs to
+    /// whatever comes next rather than to the thing above it. One row, one
+    /// divider, and the note travels with the control it describes.
+    private func captioned<Content: View>(_ note: String,
+                                          @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content()
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private func durationSetting(label: String, value: Binding<Int>, range: ClosedRange<Int>, unit: String) -> some View {
         HStack {
             Text(label)
