@@ -349,7 +349,7 @@ struct SaveCannesSettingsContent: View {
                              value: $autoDismissMinutes, range: 0...1440,
                              unit: L10n.string("settings.minutes", defaultValue: "minutes"))
             Text(L10n.string("settings.auto_dismiss_note",
-                             defaultValue: "0 = never. Otherwise, a single activation dismisses itself after this long — same as dismissing by hand, locking the screen first if that's turned on below — and won't start itself back up until you touch the Mac. A safeguard against playing for hours or days if nobody's there to dismiss it."))
+                             defaultValue: "0 means never. Otherwise a single activation ends itself after this long, locking the screen first if that is turned on below, and will not start again until you touch the Mac. A safeguard against playing to an empty room all night."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle(L10n.string("settings.lock_on_dismiss", defaultValue: "Lock screen when dismissed"),
