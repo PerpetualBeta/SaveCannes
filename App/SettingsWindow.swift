@@ -586,13 +586,17 @@ struct SaveCannesSettingsContent: View {
         }
     }
 
-    /// A fixed leading column width for the "Label: [field] unit" rows below,
-    /// wide enough for the longest label ("Hold each photo for:"). Left-aligning
-    /// every label in a column this wide — rather than each row sizing itself
-    /// to its own label — is what actually lines the fields and unit text up;
-    /// a Form's own row alignment pushes the field to the trailing edge
-    /// instead, which reads as disconnected from the label.
-    private static let numberRowLabelWidth: CGFloat = 150
+    /// As wide as the largest value this row's own formatter will accept, so
+    /// the field cannot reflow when somebody types its maximum. The width is
+    /// asked of AppKit rather than picked: an NSTextField holding that many
+    /// digits, sized to fit. Deriving it per row also means changing a range
+    /// changes the field, with nothing left to keep in step by hand.
+    private static func fieldWidth(forMaximum maximum: Int) -> CGFloat {
+        let probe = NSTextField(string: String(repeating: "0", count: String(maximum).count))
+        probe.font = .systemFont(ofSize: NSFont.systemFontSize)
+        probe.sizeToFit()
+        return ceil(probe.frame.width)
+    }
 
     private static func minutes(min lo: Int, max hi: Int) -> NumberFormatter {
         let f = NumberFormatter()
@@ -604,20 +608,22 @@ struct SaveCannesSettingsContent: View {
     }
 
     /// One "Label: [n] unit" row, shared by every numeric setting below so
-    /// they can't drift out of alignment or out of style from each other. The
-    /// label sits in a fixed-width column (`numberRowLabelWidth`) rather than
-    /// sizing to its own text, which is what actually keeps the fields and
-    /// unit text lined up across rows of differing label length.
-    @ViewBuilder
+    /// they can't drift out of alignment or out of style from each other.
+    ///
+    /// The field goes to the trailing edge, which is where every other
+    /// labelled row in this window puts its control, and it is what keeps
+    /// these four lined up without anything having to know how wide the
+    /// labels are. A fixed label column would line them up too, until the
+    /// first translation: the longest English label here is 124pt and the
+    /// German, French and Russian of the same strings all run past 150.
     private func durationSetting(label: String, value: Binding<Int>, range: ClosedRange<Int>, unit: String) -> some View {
         HStack {
             Text(label)
-                .frame(width: Self.numberRowLabelWidth, alignment: .leading)
+            Spacer()
             TextField("", value: value, formatter: Self.minutes(min: range.lowerBound, max: range.upperBound))
-                .frame(width: 60)
+                .frame(width: Self.fieldWidth(forMaximum: range.upperBound))
                 .multilineTextAlignment(.trailing)
             Text(unit)
-            Spacer()
         }
     }
 }
