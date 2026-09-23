@@ -128,8 +128,24 @@ final class StatusItem {
     /// trades "still literally the Save Cannes glyph" for "something that
     /// actually reads cleanly" — chosen for the theme as much as the
     /// pragmatism: when a film pauses, that's when you get up for popcorn.
+    ///
+    /// **Falls back to the ordinary glyph if `popcorn` is ever unavailable.**
+    /// `NSImage(systemSymbolName:)` returns nil for a symbol the running OS
+    /// does not know, and a nil assigned to `button.image` draws nothing at
+    /// all: the app would appear to have vanished from the menu bar while
+    /// still running, and specifically while suspended, which is the one
+    /// state this icon exists to advertise. `popcorn` resolves on macOS 27
+    /// and is believed to have arrived with SF Symbols 5, alongside the 14.0
+    /// floor this app builds against, but that was not confirmable here, and
+    /// an unconfirmed symbol guarding a silent disappearance is not a trade
+    /// worth making. Falling back loses the visual distinction on such a
+    /// system, which is a far smaller loss than losing the icon.
     private static func suspendedIcon() -> NSImage? {
         NSImage(systemSymbolName: "popcorn", accessibilityDescription: "Save Cannes (suspended)")
+            // Same accessibility text either way: the state is still suspended
+            // even where the glyph cannot show it.
+            ?? NSImage(systemSymbolName: "film.stack",
+                       accessibilityDescription: "Save Cannes (suspended)")
     }
 
     @objc private func showAbout() {
