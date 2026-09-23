@@ -44,6 +44,8 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 
 It won't start while something else is deliberately keeping the display awake. A video call, a film, a presentation: all of them hold a power assertion that macOS honours, and Save Cannes now honours it too. Sitting still through a call looks exactly like an empty desk if you only measure the keyboard. When the call ends, the idle countdown starts again from zero rather than firing the moment it finishes.
 
+You can also stop it activating yourself, for as long as you like: click the menu bar icon and choose **Suspend**. The icon changes to show it's off, so it can't quietly stay that way for days without you noticing, and the setting survives a relaunch. **Play Now** — from the menu, or its keyboard shortcut — still triggers the saver immediately regardless; suspending only ever affects the automatic, idle-triggered activation.
+
 - **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
 - **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
 - **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
@@ -61,7 +63,7 @@ Click the menu bar icon → **Settings…** for:
 - **Display** — how each video is fitted to the screen, whether every display shows the same one, and optional source/fitting choices for each physical display
 - **Photos** — whether photos play, and how long each is held
 - **Titles** — whether the title of what's playing appears on screen, and how often
-- **Activation** — idle timeout in minutes, and a global "Play now" hotkey. A shortcut can be cleared as well as changed
+- **Activation** — idle timeout in minutes, a global "Play now" hotkey (a shortcut can be cleared as well as changed), and a "Suspended" toggle that mirrors the menu bar's Suspend/Resume item
 - **On dismiss** — toggle to lock the screen automatically when the saver dismisses
 - **Capture** — global hotkey to save the current frame to `~/Pictures/Save Cannes/`
 - **Show icon in menu bar** — hide the film-strip status icon while Save Cannes keeps running (playback is unaffected). Your choice persists across launches, including login auto-start. *Shown only on macOS 14–15 — on macOS 26 (Tahoe) and later, use System Settings → Menu Bar, which provides this natively.*
@@ -315,6 +317,8 @@ Other targets:
 **It skips a file I know plays in QuickTime.** Then it isn't skipping it for the reason you think. Turn logging on (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES`), let the saver run, and read `~/Library/Logs/Save Cannes/savecannes.log` — every skip is logged with the reason AVFoundation gave.
 
 **The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
+
+**I don't want it to activate for a while.** Click the menu bar icon and choose **Suspend** — the icon changes to show it's off, and it stays that way, even across a relaunch, until you choose **Resume**. **Play Now** — from the menu or its keyboard shortcut — still triggers the saver regardless.
 
 **No sound.** Check Settings → Playback, and note that with multiple displays the soundtrack plays on the main display's copy only.
 

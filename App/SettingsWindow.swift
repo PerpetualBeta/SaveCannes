@@ -31,6 +31,7 @@ struct SaveCannesSettingsContent: View {
     @AppStorage("titleMode")          private var titleMode: TitleMode = .atStart
     @AppStorage("titleRepeatMinutes") private var titleRepeatMinutes: Int = 5
     @AppStorage("idleMinutes")    private var idleMinutes: Int = 5
+    @AppStorage("activationSuspended") private var activationSuspended: Bool = false
     @AppStorage("lockOnDismiss")  private var lockOnDismiss: Bool = false
 
     /// The registered sources, held in view state so the list reorders and
@@ -332,6 +333,19 @@ struct SaveCannesSettingsContent: View {
         }
 
         Section(L10n.string("settings.activation", defaultValue: "Activation")) {
+            Toggle(L10n.string("settings.suspended", defaultValue: "Suspended"), isOn: $activationSuspended)
+                .onChange(of: activationSuspended) { _, _ in
+                    // Written directly above via @AppStorage, so the status
+                    // item — which owns no observer on the key itself —
+                    // needs telling explicitly to update its icon and menu
+                    // label.
+                    NotificationCenter.default.post(name: .activationSuspendedChanged, object: nil)
+                }
+            Text(L10n.string("settings.suspended_note",
+                             defaultValue: "While suspended, Save Cannes won't activate on its own when idle. Play Now — from this menu or its shortcut — still works regardless."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             HStack {
                 Text(L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"))
                 TextField("", value: $idleMinutes, formatter: Self.minutes(min: 1, max: 1440))
