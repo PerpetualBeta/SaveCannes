@@ -533,7 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// arm two observe-lock-then-pause cycles.
     private var lockDismissInProgress = false
 
-    private func dismissWindows(triggerLock: Bool, isRebuild: Bool = false) {
+    private func dismissWindows(triggerLock: Bool) {
         guard !windows.isEmpty else { return }
         if triggerLock {
             guard !lockDismissInProgress else {
@@ -556,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             observeLockThenPause()
             LockScreen.lock()
         } else {
-            tearDownWindows(isRebuild: isRebuild)
+            tearDownWindows()
         }
     }
 
@@ -707,8 +707,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         scLog("display layout changed: \(builtForLayout ?? "none") → \(current) — recreating screensaver windows")
-        dismissWindows(triggerLock: false, isRebuild: true)
+        // Tear down directly rather than through dismissWindows(triggerLock:).
+        // A rebuild never locks, and routing it through the dismiss path only
+        // handed that path an isRebuild flag it silently ignored on its
+        // locking branch. The !windows.isEmpty guard dismissWindows applies is
+        // already made at the top of this method.
+        tearDownWindows(isRebuild: true)
         showWindows()
+        // showWindows() builds one window per NSScreen.screens entry and does
+        // not insist on getting at least one. A rebuild that lands on no
+        // screens at all would leave activatedAt set with no windows to go
+        // with it, and nothing could then clear it: the only line that does
+        // lives in tearDownWindows(), which dismissWindows() only reaches
+        // while windows is non-empty. The next genuine activation would
+        // inherit a clock that started hours ago and auto-dismiss itself about
+        // a second after appearing. Rebuilding onto nothing is not an
+        // activation, so end the clock here.
+        if windows.isEmpty { activatedAt = nil }
     }
 
     // MARK: - Status item visibility

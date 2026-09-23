@@ -101,7 +101,7 @@ That's an open REST route on a public-domain government service — no key, no t
 
 NASA's older addresses are gone: the ISS **HDEV** experiment ended in 2020, and the `ntv1`/`ntv2` NASA TV endpoints now return 403.
 
-> **A live stream never hands over.** It has no end, so once a display lands on one it stays there until you dismiss the saver — the playlist can't advance past something that never finishes. That's inherent rather than a fault, but it does mean a live stream mixed into a folder of films will eventually take that display for the rest of the session.
+> **A live stream never hands over.** It has no end, so once a display lands on one it stays there until you dismiss the saver — the playlist can't advance past something that never finishes. That's inherent rather than a fault, but it does mean a live stream mixed into a folder of films will eventually take that display for the rest of the session, unless "Auto dismiss after" is set, which ends the activation on a clock whatever is playing.
 
 Each source has a switch. Turning one off leaves it in the list, which is the point: the alternative is deleting a source to stop playing it and then having to find it again. A source that's off is dimmed and its videos are excluded from the playlist, though its count still shows so you know what you're switching back on.
 
