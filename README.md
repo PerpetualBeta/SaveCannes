@@ -320,7 +320,7 @@ Other targets:
 
 **I don't want it to activate for a while.** Click the menu bar icon and choose **Suspend** — the icon changes to show it's off, and it stays that way, even across a relaunch, until you choose **Resume**. **Play Now** — from the menu or its keyboard shortcut — still triggers the saver regardless.
 
-**It's been running for hours and nobody's there.** Set Settings → Dismiss → "Auto dismiss after" to a number of minutes: a single activation then dismisses itself after that long — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac.
+**It's been running for hours and nobody's there.** Set Settings → Dismiss → "Auto dismiss after" to a number of minutes: a single activation then dismisses itself after that long — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac. With "Lock screen when dismissed" on, this stops decoding and playback immediately, which is most of what you're after — but the player itself isn't fully released until the Mac is actually unlocked, same as a manual dismiss with that toggle on.
 
 **No sound.** Check Settings → Playback, and note that with multiple displays the soundtrack plays on the main display's copy only.
 

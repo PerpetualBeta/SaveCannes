@@ -467,7 +467,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window management
 
     private func showWindows() {
-        activatedAt = Date()
+        // Only start the clock on a genuine new activation. A rebuild
+        // (handleScreenChange, via tearDownWindows(isRebuild: true)) leaves
+        // activatedAt already set — preserve it rather than restarting the
+        // auto-dismiss timeout on a display-layout change mid-activation.
+        if activatedAt == nil { activatedAt = Date() }
         // Suppress idle-driven auto-dismiss briefly after activation. Without
         // this, hotkey/menu activations would be killed by their own user
         // input — the keypress that triggered activation also resets system
@@ -529,7 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// arm two observe-lock-then-pause cycles.
     private var lockDismissInProgress = false
 
-    private func dismissWindows(triggerLock: Bool) {
+    private func dismissWindows(triggerLock: Bool, isRebuild: Bool = false) {
         guard !windows.isEmpty else { return }
         if triggerLock {
             guard !lockDismissInProgress else {
@@ -552,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             observeLockThenPause()
             LockScreen.lock()
         } else {
-            tearDownWindows()
+            tearDownWindows(isRebuild: isRebuild)
         }
     }
 
@@ -610,7 +614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func tearDownWindows() {
+    private func tearDownWindows(isRebuild: Bool = false) {
         // A teardown ends the dismiss this handshake belonged to, so the
         // observer has nothing left to hear. Leaving it armed let a wake
         // arriving mid-handshake orphan it rather than cancel it.
@@ -622,12 +626,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockDismissInProgress = false
         autoDismissTriggered = false
         builtForLayout = nil
-        // Also resets the auto-dismiss clock. `handleScreenChange` tears down
-        // and immediately rebuilds on an actual display change, so a runtime
-        // limit restarts there too — an acceptable inaccuracy for a rare,
-        // transient event, and simpler than threading "this is a rebuild,
-        // not a new activation" through the dismiss path.
-        activatedAt = nil
+        // A rebuild (handleScreenChange tearing down only to immediately call
+        // showWindows() again on an actual display-layout change) is not a
+        // new activation — some DisplayPort setups drop a sleeping display
+        // out of NSScreen.screens entirely, which is exactly the event
+        // guaranteed to happen on the unattended-overnight Mac this timeout
+        // exists to bound. Restarting the clock there would silently defeat
+        // it. Only a genuine dismiss clears activatedAt; showWindows() only
+        // sets it when it finds nil, so a preserved value here survives the
+        // rebuild untouched.
+        if !isRebuild {
+            activatedAt = nil
+        }
         scLog("dismissed screensaver windows")
     }
 
@@ -697,7 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         scLog("display layout changed: \(builtForLayout ?? "none") → \(current) — recreating screensaver windows")
-        dismissWindows(triggerLock: false)
+        dismissWindows(triggerLock: false, isRebuild: true)
         showWindows()
     }
 
