@@ -202,7 +202,7 @@ struct SaveCannesSettingsContent: View {
 
             Toggle(L10n.string("settings.sound", defaultValue: "Play sound"), isOn: $soundEnabled)
             Text(L10n.string("settings.sound_note",
-                             defaultValue: "With more than one display, sound plays on the main display only — each display runs its own playback, so sound on all of them would overlap."))
+                             defaultValue: "With more than one display, sound plays on the main one only. Each runs its own playback, so they would overlap."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -294,7 +294,7 @@ struct SaveCannesSettingsContent: View {
                                defaultValue: "Play photos as well as videos"),
                    isOn: $photosEnabled)
             Text(L10n.string("settings.photos_note",
-                             defaultValue: "Any image a folder holds — JPEG, PNG, HEIC, TIFF, camera RAW — joins the playlist alongside the videos. Turn this off if your video folders have cover art or posters in them that you would rather not see. A file you pick by hand is always played, whichever kind it is."))
+                             defaultValue: "Any image a folder holds, JPEG, PNG, HEIC, TIFF or camera RAW, joins the playlist alongside the videos. Turn this off if your video folders hold cover art or posters you would rather not see. A file you pick by hand always plays, whichever kind it is."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -333,7 +333,7 @@ struct SaveCannesSettingsContent: View {
                     NotificationCenter.default.post(name: .activationSuspendedChanged, object: nil)
                 }
             Text(L10n.string("settings.suspended_note",
-                             defaultValue: "While suspended, Save Cannes won't activate on its own when idle. Play Now — from this menu or its shortcut — still works regardless."))
+                             defaultValue: "While suspended, Save Cannes will not activate on its own when idle. Play Now still works, from this menu or its shortcut."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
