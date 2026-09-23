@@ -78,7 +78,13 @@ final class ScreensaverWindow {
     private var eventMonitor: Any?
     /// Whether the dismiss monitor is allowed to act yet. See `activate()`:
     /// the pointer has to come to rest once before movement counts.
-    private var dismissArmed = false
+    ///
+    /// Readable from outside because the idle tick in `AppDelegate` has its
+    /// own, older dismiss path that polls system idle time rather than
+    /// watching events, and it has to hold off on the same condition. Two
+    /// guards deciding the same question by different rules is what produced
+    /// the bug this whole mechanism exists to fix.
+    private(set) var dismissArmed = false
     /// Bumped by every re-arm so a superseded settle callback can tell that
     /// it is stale and do nothing. A `Timer` would have been the obvious
     /// thing and is the wrong one: timers added to the default run-loop mode

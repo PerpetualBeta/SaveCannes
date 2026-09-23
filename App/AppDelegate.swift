@@ -448,6 +448,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 showWindows()
             }
         } else if idle < 1.0 && Date() >= dismissAllowedAfter {
+            // The windows' own event monitor ignores pointer movement until
+            // the pointer has come to rest, because movement that follows
+            // through from the click or keystroke which STARTED the saver is
+            // not a request to end it. This path has to honour the same
+            // answer. It cannot work it out for itself: it polls
+            // systemIdleSeconds() rather than watching events, so it sees
+            // "something happened" without seeing what, and the modifier
+            // release from a global hotkey resets that clock while never
+            // reaching the monitor at all.
+            //
+            // Without this, the saver survives the monitor and is killed a
+            // moment later by the tick, on the very movement the monitor is
+            // deliberately ignoring. Measured 2026-09-23: one activation held
+            // its arm back to 1.404s while the pointer was still travelling,
+            // which is 0.6s short of the dismissAllowedAfter grace above.
+            guard windows.allSatisfy(\.dismissArmed) else {
+                if !dismissHeldUnarmed {
+                    scLog("system idle dropped but the pointer is still moving — holding off")
+                    dismissHeldUnarmed = true
+                }
+                return
+            }
+            dismissHeldUnarmed = false
             scLog("system idle dropped — dismissing")
             dismissWindows(triggerLock: lockOnDismiss)
         } else if !autoDismissTriggered, autoDismissSeconds > 0, let activatedAt,
@@ -532,6 +555,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// simultaneously. Without this flag we'd call LockScreen.lock() twice and
     /// arm two observe-lock-then-pause cycles.
     private var lockDismissInProgress = false
+
+    /// Latch for the held-off log line above — the tick runs every second and
+    /// a pointer can travel for several of them.
+    private var dismissHeldUnarmed = false
 
     private func dismissWindows(triggerLock: Bool) {
         guard !windows.isEmpty else { return }
@@ -625,6 +652,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and so a future auto-dismiss trigger can fire again.
         lockDismissInProgress = false
         autoDismissTriggered = false
+        dismissHeldUnarmed = false
         builtForLayout = nil
         // A rebuild (handleScreenChange tearing down only to immediately call
         // showWindows() again on an actual display-layout change) is not a
