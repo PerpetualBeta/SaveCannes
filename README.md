@@ -60,7 +60,8 @@ Click the menu bar icon → **Settings…** for:
 
 - **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
 - **Playback** — order, and sound
-- **Display** — how each video is fitted to the screen, whether every display shows the same one, and optional source/fitting choices for each physical display
+- **Display** — how each video is fitted to the screen, and whether every display shows the same one
+- **Per-display playback** — optional source and fitting choices for each physical display
 - **Photos** — whether photos play, and how long each is held
 - **Titles** — whether the title of what's playing appears on screen, and how often
 - **Activation** — idle timeout in minutes, a global "Play now" hotkey (a shortcut can be cleared as well as changed), and a "Suspended" toggle that mirrors the menu bar's Suspend/Resume item
@@ -205,7 +206,7 @@ Your choice is remembered while the control is locked: switch to sequential orde
 
 #### Per-display playback
 
-The **Display** section can also configure each currently connected physical display independently. Choose **Configure…** beside a display, then select the sources it may play and its size-on-screen mode. This is the useful setup when, for example, an ultrawide display has a library of 21:9 films and a MacBook display has a separate library of 16:10 footage.
+The **Per-display playback** section configures each currently connected physical display independently. Choose **Configure…** beside a display, then select the sources it may play and its size-on-screen mode. This is the useful setup when, for example, an ultrawide display has a library of 21:9 films and a MacBook display has a separate library of 16:10 footage.
 
 Displays you leave unconfigured keep the global source and size settings. A configured external display remembers its choices when disconnected and reconnects, so a dock or cable change does not mean setting it up again. Choosing **Use global settings** beside a display removes just that display's profile.
 
