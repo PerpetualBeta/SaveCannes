@@ -86,12 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// dismissal always goes through `stopSingleScreen`, never
     /// `dismissWindows(triggerLock:)`.
     private var singleScreenWindows: [String: ScreensaverWindow] = [:]
-    /// IDs of single-screen "art mode" windows the all-displays saver most
-    /// recently superseded in `showWindows()`, to hand back to
-    /// `restorePendingSingleScreenSessions()` once that saver ends through
-    /// real presence. Cleared, not restored, by the auto-dismiss path —
-    /// see that call site for why.
-    private var pendingSingleScreenRestoreIDs: Set<String> = []
     /// Which single-screen session, if any, currently owns audio — at most
     /// one, ever. See the claim/release comments in `startSingleScreen`/
     /// `stopSingleScreen`.
@@ -354,14 +348,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.dismissWindows(triggerLock: mustLock)
             self.dismissPausedSingleScreenWindows()
-            // Not when mustLock: that path defers the actual teardown to
-            // the lock (and a later unlock), so nothing has genuinely ended
-            // yet — restoring here would restart a decorative screen in
-            // the middle of forcing a lock shut, rather than once it's
-            // actually back to normal.
-            if !mustLock {
-                self.restorePendingSingleScreenSessions()
-            }
         }
 
         wakeObservers.append(ws.addObserver(
@@ -461,32 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activationAllowedAfter = Date().addingTimeInterval(idleThresholdSeconds)
         scLog("com.apple.screensaver.didstop — macOS's own screen saver ended; idle countdown restarted")
         dismissPausedSingleScreenWindows()
-        dismissAllDisplaysSaver()
-    }
-
-    /// The one, shared "end the all-displays saver, honouring lock-on-dismiss"
-    /// path — every call site that ends it through real presence (a click or
-    /// key on the saver itself, the idle-tick's own poll-based fallback, the
-    /// native screen saver ending) routes through this rather than calling
-    /// `dismissWindows` directly, so `restorePendingSingleScreenSessions()`
-    /// is never forgotten at a new one. The most common of those call sites —
-    /// a `ScreensaverWindow`'s own local event monitor catching the actual
-    /// dismissing click — was the one this was first missing from: the
-    /// monitor fires immediately, `tick()`'s own idle-based dismiss check
-    /// only up to a second later, so in practice the monitor always wins,
-    /// and restoration wired only into `tick()`'s branch alone never ran.
-    ///
-    /// Guarded against `lockOnDismiss`, same as everywhere else this
-    /// pattern appears: that path defers the actual teardown to the lock
-    /// itself (and a later unlock), so nothing has genuinely ended yet —
-    /// restoring here would restart a decorative screen in the middle of
-    /// locking the Mac shut. The later unlock's own `onWake` handler
-    /// restores it once that's actually over.
-    private func dismissAllDisplaysSaver() {
         dismissWindows(triggerLock: lockOnDismiss)
-        if !lockOnDismiss {
-            restorePendingSingleScreenSessions()
-        }
     }
 
     /// No wake handler of its own: `screensDidWakeNotification` goes through
@@ -514,31 +475,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard playbackPaused, !singleScreenWindows.isEmpty else { return }
         for id in Array(singleScreenWindows.keys) { stopSingleScreen(id: id) }
         playbackPaused = false
-    }
-
-    /// Hands back whatever single-screen "art mode" sessions the
-    /// all-displays saver superseded in `showWindows()`, once that saver
-    /// ends through **real presence** — moving the mouse, an unlock,
-    /// macOS's own screen saver ending. So idling into the full saver and
-    /// then coming back doesn't leave you to manually re-start what you'd
-    /// deliberately set up before it took over.
-    ///
-    /// Deliberately NOT called from the auto-dismiss path: that timeout
-    /// exists specifically to bound unattended playback, and restarting a
-    /// decorative screen the moment it fires would quietly defeat it —
-    /// see that call site, which clears the memory instead of restoring it.
-    ///
-    /// Restarted fresh, not resumed, the same as everything else in this
-    /// app: only the choice of screen survives, not a playhead.
-    private func restorePendingSingleScreenSessions() {
-        guard !pendingSingleScreenRestoreIDs.isEmpty else { return }
-        let ids = pendingSingleScreenRestoreIDs
-        pendingSingleScreenRestoreIDs.removeAll()
-        for screen in NSScreen.screens {
-            let id = DisplayIdentity.id(for: screen)
-            guard ids.contains(id) else { continue }
-            startSingleScreen(screen, id: id)
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -764,19 +700,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             dismissHeldUnarmed = false
             scLog("system idle dropped — dismissing")
-            dismissAllDisplaysSaver()
+            dismissWindows(triggerLock: lockOnDismiss)
         } else if !autoDismissTriggered, autoDismissSeconds > 0, let activatedAt,
                   Date().timeIntervalSince(activatedAt) >= autoDismissSeconds {
             scLog("auto dismiss (\(Int(autoDismissSeconds / 60))min) reached — stopping, will not auto-restart until real input")
             autoDismissTriggered = true
             autoDismissSuppressed = true
             dismissWindows(triggerLock: lockOnDismiss)
-            // Not restorePendingSingleScreenSessions(): nobody's there to
-            // have come back to, and starting a decorative screen right
-            // after auto-dismiss fired for exactly that reason would
-            // quietly defeat it. Drop the memory rather than let it wait
-            // and restore itself on some later, unrelated dismiss instead.
-            pendingSingleScreenRestoreIDs.removeAll()
         }
     }
 
@@ -791,27 +721,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The all-displays saver supersedes any single-screen "art mode"
         // window — both would otherwise cover the same display with two
         // independent players. Stop those first rather than leaving them to
-        // fight over the screen, remembering which displays they were on so
-        // `restorePendingSingleScreenSessions()` can hand them back once
-        // this saver ends.
-        //
-        // Only overwrite the memory when there's actually something to
-        // supersede right now. `showWindows()` is also called mid-rebuild
-        // (handleScreenChange, via tearDownWindows(isRebuild: true)), by
-        // which point singleScreenWindows is already empty — capturing that
-        // would stomp a still-pending restore from the activation this
-        // rebuild is only reshaping, not ending.
-        if !singleScreenWindows.isEmpty {
-            pendingSingleScreenRestoreIDs = Set(singleScreenWindows.keys)
-            for (_, win) in singleScreenWindows { win.deactivate() }
-            singleScreenWindows.removeAll()
-            // Release rather than leave dangling: a stale non-nil owner ID
-            // here would tell the next startSingleScreen (from
-            // restorePendingSingleScreenSessions) that audio is already
-            // claimed by a window that no longer exists, silencing the
-            // restored session for no reason.
-            singleScreenAudioOwnerID = nil
-        }
+        // fight over the screen. They are not brought back when this saver
+        // ends. A single-screen window that anything else covers (a lock,
+        // display sleep, macOS's own screen saver) is ended, not resumed, so
+        // this cover is treated the same way. One rule for every cover.
+        for id in Array(singleScreenWindows.keys) { stopSingleScreen(id: id) }
         // Only start the clock on a genuine new activation. A rebuild
         // (handleScreenChange, via tearDownWindows(isRebuild: true)) leaves
         // activatedAt already set — preserve it rather than restarting the
@@ -861,7 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 scaling: scaling,
                 startOffset: mirrored || playbackOrder == .sequential ? 0 : index
             ) { [weak self] in
-                self?.dismissAllDisplaysSaver()
+                self?.dismissWindows(triggerLock: self?.lockOnDismiss ?? false)
             }
             windows.append(win)
             win.activate()
@@ -1000,6 +914,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         singleScreenWindows[DisplayIdentity.id(for: screen)] != nil
     }
 
+    /// Whether this display may play on its own. Not the primary display
+    /// when "Displays have separate Spaces" is off: that display then holds
+    /// the only menu bar and the Dock, and a window at `.screenSaver` level
+    /// covers both, for every app on every display. A click on it still
+    /// ends it, but the menu's Stop row is under it. With separate Spaces
+    /// on, every display has its own menu bar, so any one may play. The
+    /// setting only changes at logout, so reading it here is enough.
+    func canPlaySingleScreen(_ screen: NSScreen) -> Bool {
+        NSScreen.screensHaveSeparateSpaces || screen != NSScreen.screens.first
+    }
+
     /// Start or stop a single display's own activation, independent of every
     /// other display. The status menu's per-display row calls this.
     func toggleSingleScreen(_ screen: NSScreen) {
@@ -1013,6 +938,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // same pixels.
         guard windows.isEmpty else {
             scLog("single-screen: ignored request for \(screen.localizedName) — the full-screen saver is already active")
+            return
+        }
+        guard canPlaySingleScreen(screen) else {
+            scLog("single-screen: ignored request for \(screen.localizedName) — it holds the only menu bar and the Dock")
             return
         }
         startSingleScreen(screen, id: id)

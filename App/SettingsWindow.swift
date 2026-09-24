@@ -205,13 +205,13 @@ struct SaveCannesSettingsContent: View {
             }
 
             captioned(L10n.string("settings.sound_note",
-                                 defaultValue: "With more than one display, sound plays only on the main one (when all screens are playing) or on the first display launched manually, this avoids sound overlap.")) {
+                                 defaultValue: "With more than one display, sound plays only on the main one when all displays play, or on the first single screen you start. This stops two soundtracks overlapping.")) {
                 Picker(L10n.string("settings.sound", defaultValue: "Play sound:"), selection: $soundMode) {
                     Text(L10n.string("settings.sound_never", defaultValue: "Never"))
                         .tag(SoundMode.never)
-                    Text(L10n.string("settings.sound_all_displays", defaultValue: "On the main display when launching all displays"))
+                    Text(L10n.string("settings.sound_all_displays", defaultValue: "All displays"))
                         .tag(SoundMode.allDisplays)
-                    Text(L10n.string("settings.sound_single_screen_too", defaultValue: "On the main display when launching all displays, or on the first manually launched screen"))
+                    Text(L10n.string("settings.sound_single_screen_too", defaultValue: "All displays and one single screen"))
                         .tag(SoundMode.singleScreenToo)
                 }
             }

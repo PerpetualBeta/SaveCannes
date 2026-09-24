@@ -138,14 +138,18 @@ final class StatusItem: NSObject, NSMenuDelegate {
         let anchorIndex = menu.index(of: suspendResumeItem)
         guard anchorIndex >= 0 else { return }
 
-        let screens = NSScreen.screens.sorted { $0.localizedName < $1.localizedName }
-        guard screens.count > 1 else { return }
+        guard NSScreen.screens.count > 1, let appDelegate else { return }
+        // No row for a display that may not play on its own. See
+        // `AppDelegate.canPlaySingleScreen`.
+        let screens = NSScreen.screens
+            .filter { appDelegate.canPlaySingleScreen($0) }
+            .sorted { $0.localizedName < $1.localizedName }
 
         // Inserted directly above Suspend/Resume, which is why it always
         // ends up last: every insertion here pushes it down by one.
         var insertAt = anchorIndex
         for screen in screens {
-            let playing = appDelegate?.isPlayingSingleScreen(screen) ?? false
+            let playing = appDelegate.isPlayingSingleScreen(screen)
             let title = playing
                 ? L10n.format("menu.stop_display_format", defaultValue: "Stop %@", screen.localizedName)
                 : L10n.format("menu.play_display_format", defaultValue: "Play on %@", screen.localizedName)

@@ -214,45 +214,23 @@ A configured display plays exactly the sources you ticked for it, whether or not
 
 Displays showing the same video are started together but aren't frame-locked: separate players drift by a frame or two over a long clip. Side by side you're unlikely to notice; if it ever matters, the fix is `AVPlayer.setRate(_:time:atHostTime:)` against a common clock.
 
-With more than one display connected, the menu bar icon's menu also lists a **Play on
-\<display name\>** row for each one, between Play Now and Suspend/Resume, ordered by
-name. Choosing one turns just that display into a piece of art — a folder of photos, a
-film, a stream — while every other display and app carries on exactly as it was. It
-does not take keyboard focus, does not hide the cursor anywhere but over its own
-pixels, and does not respond to the idle timeout at all: it runs until you end it
-yourself, either from the same menu (now reading **Stop \<display name\>**) or with a
-single click anywhere on that display. Moving the pointer across it, typing, or
-clicking somewhere else has no effect.
+With more than one display connected, the menu bar icon's menu also lists a **Play on \<display name\>** row for each one, between Play Now and Suspend/Resume, ordered by name. Choosing one turns just that display into a piece of art — a folder of photos, a film, a stream — while every other display and app carries on exactly as it was. It does not take keyboard focus, does not hide the cursor anywhere but over its own pixels, and does not respond to the idle timeout at all: it runs until you end it yourself, either from the same menu (now reading **Stop \<display name\>**) or with a single click anywhere on that display. Moving the pointer across it, typing, or clicking somewhere else has no effect.
 
-Ending it never locks the screen, regardless of the "Lock screen when dismissed"
-setting in Dismiss — that toggle means stepping away from the whole Mac, which isn't
-what clicking a spare monitor playing something ornamental means.
+If "Displays have separate Spaces" is off in System Settings → Desktop & Dock, your main display has no row. It then holds the only menu bar and the Dock, and a single-screen window would cover both for every app until you clicked it away. With that setting on, every display has its own menu bar, and any of them can play.
 
-Starting the ordinary, all-displays saver — by idle, by Play Now, or by its own hotkey
-— always wins: it stops every single-screen window first rather than leaving two
-independent players fighting over the same display. And if macOS's own screen saver
-starts, the display sleeps, or the screen locks while a single-screen window is
-playing, it pauses in place along with everything else and ends the same way once
-that's over — see **Idle timeout vs. macOS's own timers** below.
+Ending it never locks the screen, regardless of the "Lock screen when dismissed" setting in Dismiss — that toggle means stepping away from the whole Mac, which isn't what clicking a spare monitor playing something ornamental means.
 
-If idling into the all-displays saver was what superseded a single-screen window,
-coming back restarts it once you dismiss the full saver — moving the mouse, waking, or
-unlocking — so a desk left with one display running its own art and the other in
-normal use comes back to exactly that, rather than needing it set up by hand again.
-The one exception is the auto-dismiss timeout in Dismiss: that exists specifically to
-stop unattended playback, so it ends everything without restarting the single-screen
-window either.
+Anything that covers a single-screen window ends it, and nothing brings it back: start it again from the menu. The ordinary, all-displays saver — by idle, by Play Now, or by its own hotkey — stops every single-screen window first rather than leaving two independent players fighting over the same display. If macOS's own screen saver starts, the display sleeps, or the screen locks, a single-screen window pauses in place along with everything else and ends once that's over — see **Idle timeout vs. macOS's own timers** below.
 
-Whether a single-screen window carries sound at all is its own setting — see **Sound**
-below.
+Whether a single-screen window carries sound at all is its own setting — see **Sound** below.
 
 ### Sound
 
 Off by default — a screensaver that starts talking to an empty room is nobody's friend. Settings → Playback → "Play sound" has three choices:
 
 - **Never** — silent, always.
-- **When playing on all displays** — sound on the main display only, while the ordinary, synced saver plays (by idle, Play Now, or its hotkey). Every display runs its own playback, so sound on more than one would mean the same soundtrack two or three times over, a few frames apart.
-- **Also on a single "art mode" screen** — everything the option above does, plus sound on the *first* single-screen "art mode" session you start (see **Multiple displays** below), whichever display that turns out to be. Starting a second one while the first still has sound leaves the second silent, for the same overlap reason. If the all-displays saver later supersedes it — idling in while it's running — sound moves to the main display for as long as that lasts, the same as if all displays had started together; dismissing it and getting the art-mode screen back (see below) hands its sound back too.
+- **All displays** — sound on the main display only, while the ordinary, synced saver plays (by idle, Play Now, or its hotkey). Every display runs its own playback, so sound on more than one would mean the same soundtrack two or three times over, a few frames apart.
+- **All displays and one single screen** — everything the option above does, plus sound on the *first* single-screen "art mode" session you start (see **Multiple displays** above), whichever display that turns out to be. Starting a second one while the first still has sound leaves the second silent, for the same overlap reason.
 
 ### Titles
 
