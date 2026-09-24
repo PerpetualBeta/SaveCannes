@@ -40,7 +40,7 @@ As a regular app it gets out of its own way: it asks for your folder, plays from
 
 ## What it does
 
-When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss.
+When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss. If you started it yourself, from the menu or a shortcut, it waits for the pointer to stop before it treats movement as a dismiss, so carrying on to move your hand away doesn't close what you just opened.
 
 It won't start while something else is deliberately keeping the display awake. A video call, a film, a presentation: all of them hold a power assertion that macOS honours, and Save Cannes now honours it too. Sitting still through a call looks exactly like an empty desk if you only measure the keyboard. When the call ends, the idle countdown starts again from zero rather than firing the moment it finishes.
 
