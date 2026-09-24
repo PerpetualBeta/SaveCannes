@@ -19,7 +19,7 @@ import IOKit.ps
 /// Each of the three timers, independently, can be "Never" — and when it
 /// is, it simply isn't part of the comparison at all, the same as if it
 /// couldn't be read. There is no minimum across the three that has to
-/// exist: if every one of them is "Never" (or unreadable), `coverage` below
+/// exist: if every one of them is "Never" (or unreadable), `minimumTrigger` below
 /// is `nil` and Settings shows nothing, because there is genuinely nothing
 /// for Save Cannes' own idle timeout to lose a race against.
 ///
@@ -35,7 +35,7 @@ import IOKit.ps
 ///
 /// ## Why a lock delay is deliberately not part of this
 ///
-/// `AppDelegate` tears its own windows down (`observeSystemScreenCoverage`)
+/// `AppDelegate` tears its own windows down (`observeMacScreenState()`)
 /// the moment macOS's own screen saver starts **or** the display sleeps,
 /// whichever happens first — not only once the session actually locks. So
 /// the number Save Cannes' idle timeout has to beat is the soonest of
@@ -88,7 +88,7 @@ enum SystemScreenLockSettings {
     /// would send them nowhere. `nil` when every one of them is "Never" (or
     /// unreadable) — nothing for Save Cannes' own idle timeout to lose a
     /// race against at all.
-    static var coverage: (seconds: TimeInterval, cause: Cause)? {
+    static var minimumTrigger: (seconds: TimeInterval, cause: Cause)? {
         var candidates: [(TimeInterval, Cause)] = displaySleepProfiles.compactMap { profile in
             profile.seconds.map { ($0, profile.cause) }
         }
@@ -127,8 +127,8 @@ enum SystemScreenLockSettings {
         for profile in displaySleepProfiles {
             parts.append("\(profile.cause.logLabel)=\(describe(profile.seconds))")
         }
-        if let coverage {
-            parts.append("min=\(describe(coverage.seconds)) (\(coverage.cause.logLabel))")
+        if let minimumTrigger {
+            parts.append("min=\(describe(minimumTrigger.seconds)) (\(minimumTrigger.cause.logLabel))")
         } else {
             parts.append("min=none (nothing macOS would do on its own)")
         }

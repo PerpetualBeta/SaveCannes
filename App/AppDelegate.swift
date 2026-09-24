@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// True between a `com.apple.screensaver.didstart` and its matching
     /// `didstop` — macOS's own screen saver, not ours. Tracked from the
     /// notification rather than polled, since there's no "is it running
-    /// right now" query to ask. See `observeSystemScreenCoverage`.
+    /// right now" query to ask. See `observeMacScreenState()`.
     private var nativeScreensaverRunning = false
     /// Mirrors `activationHeldByLock`, for the display itself being asleep.
     /// See `displayAsleep`.
@@ -69,11 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// True while our own windows are up but paused because the login
     /// session is locked — whether we asked for that lock ourselves or it
     /// happened on its own (Lock Now, lid close, a hot corner). Guards
-    /// `pauseForLockCoverage` against pausing (and logging) twice for the
+    /// `pauseForMacLock` against pausing (and logging) twice for the
     /// one lock our own dismiss-with-lock flow and this permanent observer
     /// both hear about.
     private var windowsPausedForLock = false
-    private var coverageObservers: [NSObjectProtocol] = []
+    /// Watches macOS's own screen state: the login-session lock, the native
+    /// screen saver starting/stopping, and the display itself sleeping. See
+    /// `observeMacScreenState()`.
+    private var macScreenStateObservers: [NSObjectProtocol] = []
     private var screenChangeObserver: NSObjectProtocol?
     /// Signature of the display layout the live windows were built for.
     /// `nil` when no windows exist. See `handleScreenChange`.
@@ -242,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleScreenChange()
         }
         observeWakeAndUnlock()
-        observeSystemScreenCoverage()
+        observeMacScreenState()
     }
 
     /// An `LSUIElement` app is given **no main menu**, and the standard editing
@@ -360,19 +363,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// actually fires first, on a laptop running on battery — wasn't
     /// observed at all, so activating straight into an already-dark
     /// display was entirely possible.
-    private func observeSystemScreenCoverage() {
+    private func observeMacScreenState() {
         let dn = DistributedNotificationCenter.default()
-        coverageObservers.append(dn.addObserver(
+        macScreenStateObservers.append(dn.addObserver(
             forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main
         ) { [weak self] _ in
-            self?.pauseForLockCoverage(reason: "com.apple.screenIsLocked")
+            self?.pauseForMacLock(reason: "com.apple.screenIsLocked")
         })
-        coverageObservers.append(dn.addObserver(
+        macScreenStateObservers.append(dn.addObserver(
             forName: Notification.Name("com.apple.screensaver.didstart"), object: nil, queue: .main
         ) { [weak self] _ in
             self?.handleNativeScreensaverStarted()
         })
-        coverageObservers.append(dn.addObserver(
+        macScreenStateObservers.append(dn.addObserver(
             forName: Notification.Name("com.apple.screensaver.didstop"), object: nil, queue: .main
         ) { [weak self] _ in
             self?.handleNativeScreensaverStopped()
@@ -382,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // is routinely a couple of minutes on battery, well under most
         // people's screen-saver delay, and it needn't ever launch the
         // screen saver at all for the display to go dark.
-        coverageObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+        macScreenStateObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.handleDisplaySleep()
@@ -395,7 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// whichever of those notices first does the pausing and the logging,
     /// and `windowsPausedForLock` stops the other from doing either again
     /// for the same lock.
-    private func pauseForLockCoverage(reason: String) {
+    private func pauseForMacLock(reason: String) {
         guard !windows.isEmpty, !windowsPausedForLock else { return }
         windowsPausedForLock = true
         for win in windows { win.pauseAnimation() }
@@ -463,11 +466,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // no-op on a center a given token was never registered with, so
         // calling both on every token is safe and simpler than tracking
         // which one each came from.
-        for obs in coverageObservers {
+        for obs in macScreenStateObservers {
             dn.removeObserver(obs)
             ws.removeObserver(obs)
         }
-        coverageObservers.removeAll()
+        macScreenStateObservers.removeAll()
         cleanupLockObserver()
         dismissWindows(triggerLock: false)
         scLog("applicationWillTerminate")
@@ -767,7 +770,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // will ever arrive. Waiting the full timeout and then declaring failure
         // is what the log did for four months.
         if LockScreen.screenIsLocked {
-            pauseForLockCoverage(reason: "screen already locked before our own request")
+            pauseForMacLock(reason: "screen already locked before our own request")
             return
         }
         let center = DistributedNotificationCenter.default()
@@ -775,7 +778,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let prev = lockConfirmObserver { center.removeObserver(prev); lockConfirmObserver = nil }
 
         // The actual pausing (and its log line) happens in the permanent
-        // observer set up by `observeSystemScreenCoverage()`, which hears
+        // observer set up by `observeMacScreenState()`, which hears
         // this same notification. This one exists only to confirm the lock
         // we just requested actually happened, for the safety net below.
         lockConfirmObserver = center.addObserver(
@@ -797,7 +800,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // conflating them sent three investigations down the wrong road.
             if LockScreen.screenIsLocked {
                 scLog("no screenIsLocked in time, but the screen IS locked — pausing")
-                self.pauseForLockCoverage(reason: "screen confirmed locked (late)")
+                self.pauseForMacLock(reason: "screen confirmed locked (late)")
             } else {
                 scLog("no screenIsLocked in time and the screen is NOT locked — tearing down")
                 self.tearDownWindows()

@@ -52,11 +52,12 @@ struct SaveCannesSettingsContent: View {
     /// Refreshed when macOS reports a monitor connection or configuration
     /// change, so the per-display section stays in sync while it is open.
     @State private var connectedDisplays: [ConnectedDisplay] = []
-    /// macOS's own idle-based screen-covering timers, re-read periodically
-    /// while Settings is open — see `macScreenLockNote`. `nil` means "no
-    /// timer set", not "definitely never", per `SystemScreenLockSettings`.
-    @State private var macCoverageSeconds: TimeInterval?
-    @State private var macCoverageCause: SystemScreenLockSettings.Cause?
+    /// The soonest of macOS's own idle-based screen timers, re-read
+    /// periodically while Settings is open — see `macScreenLockNote`. `nil`
+    /// means "no timer set", not "definitely never", per
+    /// `SystemScreenLockSettings`.
+    @State private var macMinimumTriggerSeconds: TimeInterval?
+    @State private var macMinimumTriggerCause: SystemScreenLockSettings.Cause?
 
     // There is no Permissions section for Accessibility, and that is deliberate.
     //
@@ -377,26 +378,38 @@ struct SaveCannesSettingsContent: View {
         )) { _ in
             refreshConnectedDisplays()
         }
-        // macOS's own screen-saver/lock timers live in System Settings, not
-        // in anything this app is told about — no notification fires when
-        // they change. A cheap poll, only while this window is open, is what
-        // keeps `macScreenLockNote` from going stale if someone flips over
-        // to System Settings and back without closing us.
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+        // macOS's own screen-saver/display-sleep timers live in System
+        // Settings, not in anything this app is told about — no
+        // notification fires when they change. Returning to this app after
+        // visiting System Settings (the common case) refreshes instantly;
+        // the poll below is only a backstop for the rarer case of both
+        // windows being visible side by side at once, so it can afford to
+        // be relaxed — see `JorvikPermissionWatcher`, which uses exactly
+        // this same two-part strategy for a TCC permission row.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshMacScreenLockTimers()
+        }
+        .onReceive(Timer.publish(every: Self.macScreenLockPollSeconds, on: .main, in: .common).autoconnect()) { _ in
             refreshMacScreenLockTimers()
         }
     }
 
-    /// Logged only when the summary actually changes, not on every 2s poll
-    /// — matches every other transition-only log line in this app (e.g.
+    /// Only a backstop (see the `onReceive` comment above), not the primary
+    /// way this refreshes — generous rather than tight, since going stale
+    /// for a few seconds while both windows happen to be open at once costs
+    /// nothing.
+    private static let macScreenLockPollSeconds: TimeInterval = 10
+
+    /// Logged only when the summary actually changes, not on every poll —
+    /// matches every other transition-only log line in this app (e.g.
     /// `AppDelegate`'s `activationHeldByLock`) rather than spamming the log
     /// for as long as Settings happens to stay open.
     private static var lastLoggedMacScreenLockSummary: String?
 
     private func refreshMacScreenLockTimers() {
-        let coverage = SystemScreenLockSettings.coverage
-        macCoverageSeconds = coverage?.seconds
-        macCoverageCause = coverage?.cause
+        let trigger = SystemScreenLockSettings.minimumTrigger
+        macMinimumTriggerSeconds = trigger?.seconds
+        macMinimumTriggerCause = trigger?.cause
         let summary = SystemScreenLockSettings.summaryForLogging
         if summary != Self.lastLoggedMacScreenLockSummary {
             scLog("macOS screen/display timers: \(summary)")
@@ -408,37 +421,39 @@ struct SaveCannesSettingsContent: View {
     /// actually something to warn about: macOS's own screen saver, or the
     /// display-sleep timer on some power source, is set at or below our own
     /// idle timeout — the single number that matters, per
-    /// `SystemScreenLockSettings.coverage`. A password/lock delay on top of
-    /// any of that is deliberately not part of this: `AppDelegate` tears
-    /// our own windows down the moment either one fires, so how much later
-    /// the session might additionally lock is moot — we've already stopped
-    /// by then.
+    /// `SystemScreenLockSettings.minimumTrigger`. A password/lock delay on
+    /// top of any of that is deliberately not part of this: `AppDelegate`
+    /// tears our own windows down the moment either one fires, so how much
+    /// later the session might additionally lock is moot — we've already
+    /// stopped by then.
     ///
     /// `nil` — meaning no note at all, not even a reassuring one — whenever
     /// there's nothing to warn about: macOS has none of these timers set at
-    /// all (`coverage` is `nil`), or our own timeout already clears
+    /// all (`minimumTrigger` is `nil`), or our own timeout already clears
     /// whichever of them is soonest.
     private var macScreenLockNote: String? {
-        guard let macCoverageSeconds, let macCoverageCause,
-              Double(idleMinutes) * 60 >= macCoverageSeconds
+        guard let macMinimumTriggerSeconds, let macMinimumTriggerCause,
+              Double(idleMinutes) * 60 >= macMinimumTriggerSeconds
         else { return nil }
-        let coverMinutes = Int((macCoverageSeconds / 60).rounded())
-        // The right label depends on which mechanism is actually binding —
-        // distinct L10n keys per cause, not one key reused with three
-        // different defaultValues, so a future translation can tell them
-        // apart too.
-        let causeLabel: String
-        switch macCoverageCause {
+        let triggerMinutes = Int((macMinimumTriggerSeconds / 60).rounded())
+        // Named exactly as System Settings itself labels the row, in
+        // quotes, so there's no doubt this is about a *macOS* setting and
+        // no ambiguity about which one to go change. The right one depends
+        // on which mechanism is actually binding — distinct L10n keys per
+        // cause, not one key reused with three different defaultValues, so
+        // a future translation can tell them apart too.
+        let settingName: String
+        switch macMinimumTriggerCause {
         case .screensaver:
-            causeLabel = L10n.string("settings.mac_cause_screensaver", defaultValue: "the screen saver")
+            settingName = L10n.string("settings.mac_setting_screensaver", defaultValue: "Start Screen Saver when inactive")
         case .displaySleepBattery:
-            causeLabel = L10n.string("settings.mac_cause_display_sleep_battery", defaultValue: "the display turning off on battery")
+            settingName = L10n.string("settings.mac_setting_display_sleep_battery", defaultValue: "Turn display off on battery when inactive")
         case .displaySleepACPower:
-            causeLabel = L10n.string("settings.mac_cause_display_sleep_power", defaultValue: "the display turning off on power")
+            settingName = L10n.string("settings.mac_setting_display_sleep_power", defaultValue: "Turn display off on power adapter when inactive")
         }
         return L10n.format("settings.idle_timeout_warn_covered",
-                            defaultValue: "Warning: %@ is set to %d min, before this idle timeout — Save Cannes may never get a turn.",
-                            causeLabel, coverMinutes)
+                            defaultValue: "Warning: your Mac's '%@' setting is %d min, before this idle timeout — Save Cannes may never get a turn.",
+                            settingName, triggerMinutes)
     }
 
     // MARK: - Multi-display
