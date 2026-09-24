@@ -52,6 +52,11 @@ struct SaveCannesSettingsContent: View {
     /// Refreshed when macOS reports a monitor connection or configuration
     /// change, so the per-display section stays in sync while it is open.
     @State private var connectedDisplays: [ConnectedDisplay] = []
+    /// macOS's own idle-based screen-covering timers, re-read periodically
+    /// while Settings is open — see `macScreenLockNote`. `nil` means "no
+    /// timer set", not "definitely never", per `SystemScreenLockSettings`.
+    @State private var macCoverageSeconds: TimeInterval?
+    @State private var macCoverageCause: SystemScreenLockSettings.Cause?
 
     // There is no Permissions section for Accessibility, and that is deliberate.
     //
@@ -331,6 +336,14 @@ struct SaveCannesSettingsContent: View {
             durationSetting(label: L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"),
                              value: $idleMinutes, range: 1...1440,
                              unit: L10n.string("settings.minutes", defaultValue: "minutes"))
+            // Not routed through `captioned` above: that helper always shows
+            // its note, and this one deliberately shows nothing at all when
+            // there's nothing to warn about (see `macScreenLockNote`).
+            if let note = macScreenLockNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             ShortcutRow(label: L10n.string("settings.play_now", defaultValue: "Play now:"),
                         slot: .activate)
         }
@@ -357,12 +370,75 @@ struct SaveCannesSettingsContent: View {
             scLog("settings opened")
             refreshConnectedDisplays()
             recount()
+            refreshMacScreenLockTimers()
         }
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didChangeScreenParametersNotification
         )) { _ in
             refreshConnectedDisplays()
         }
+        // macOS's own screen-saver/lock timers live in System Settings, not
+        // in anything this app is told about — no notification fires when
+        // they change. A cheap poll, only while this window is open, is what
+        // keeps `macScreenLockNote` from going stale if someone flips over
+        // to System Settings and back without closing us.
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            refreshMacScreenLockTimers()
+        }
+    }
+
+    /// Logged only when the summary actually changes, not on every 2s poll
+    /// — matches every other transition-only log line in this app (e.g.
+    /// `AppDelegate`'s `activationHeldByLock`) rather than spamming the log
+    /// for as long as Settings happens to stay open.
+    private static var lastLoggedMacScreenLockSummary: String?
+
+    private func refreshMacScreenLockTimers() {
+        let coverage = SystemScreenLockSettings.coverage
+        macCoverageSeconds = coverage?.seconds
+        macCoverageCause = coverage?.cause
+        let summary = SystemScreenLockSettings.summaryForLogging
+        if summary != Self.lastLoggedMacScreenLockSummary {
+            scLog("macOS screen/display timers: \(summary)")
+            Self.lastLoggedMacScreenLockSummary = summary
+        }
+    }
+
+    /// A warning for the idle-timeout row, shown **only** when there's
+    /// actually something to warn about: macOS's own screen saver, or the
+    /// display-sleep timer on some power source, is set at or below our own
+    /// idle timeout — the single number that matters, per
+    /// `SystemScreenLockSettings.coverage`. A password/lock delay on top of
+    /// any of that is deliberately not part of this: `AppDelegate` tears
+    /// our own windows down the moment either one fires, so how much later
+    /// the session might additionally lock is moot — we've already stopped
+    /// by then.
+    ///
+    /// `nil` — meaning no note at all, not even a reassuring one — whenever
+    /// there's nothing to warn about: macOS has none of these timers set at
+    /// all (`coverage` is `nil`), or our own timeout already clears
+    /// whichever of them is soonest.
+    private var macScreenLockNote: String? {
+        guard let macCoverageSeconds, let macCoverageCause,
+              Double(idleMinutes) * 60 >= macCoverageSeconds
+        else { return nil }
+        let coverMinutes = Int((macCoverageSeconds / 60).rounded())
+        // The right label depends on which mechanism is actually binding —
+        // distinct L10n keys per cause, not one key reused with three
+        // different defaultValues, so a future translation can tell them
+        // apart too.
+        let causeLabel: String
+        switch macCoverageCause {
+        case .screensaver:
+            causeLabel = L10n.string("settings.mac_cause_screensaver", defaultValue: "the screen saver")
+        case .displaySleepBattery:
+            causeLabel = L10n.string("settings.mac_cause_display_sleep_battery", defaultValue: "the display turning off on battery")
+        case .displaySleepACPower:
+            causeLabel = L10n.string("settings.mac_cause_display_sleep_power", defaultValue: "the display turning off on power")
+        }
+        return L10n.format("settings.idle_timeout_warn_covered",
+                            defaultValue: "Warning: %@ is set to %d min, before this idle timeout — Save Cannes may never get a turn.",
+                            causeLabel, coverMinutes)
     }
 
     // MARK: - Multi-display
