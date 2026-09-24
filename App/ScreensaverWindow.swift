@@ -96,6 +96,16 @@ final class ScreensaverWindow {
     private let sourcesOverride: [VideoSource]?
     private let scaling: VideoScaling
     private let startOffset: Int
+    /// `true` for the ordinary, all-displays saver: every window dismisses
+    /// together on any mouse or key event, wherever it lands, because the
+    /// whole point is that nothing else is usable while it's up.
+    ///
+    /// `false` for a single-screen "art mode" window (see
+    /// `AppDelegate.startSingleScreen`): every other display and app stays in
+    /// normal use while this plays, so it must NOT grab the keyboard, hide
+    /// the cursor everywhere, or dismiss on input meant for something else
+    /// entirely. Only a click landing on this window's own pixels stops it.
+    private let dismissesOnAnyInput: Bool
     let screen: NSScreen
 
     /// - Parameters:
@@ -105,12 +115,15 @@ final class ScreensaverWindow {
     ///   - sharedPlaylist: the list every display is mirroring, or nil for a
     ///     display that plays its own.
     ///   - startOffset: where in the list this display begins.
+    ///   - dismissesOnAnyInput: see the property doc. Defaults to `true`,
+    ///     the all-displays saver's original, unchanged behaviour.
     init(screen: NSScreen,
          audioEnabled: Bool,
          sharedPlaylist: [URL]?,
          sourcesOverride: [VideoSource]?,
          scaling: VideoScaling,
          startOffset: Int,
+         dismissesOnAnyInput: Bool = true,
          onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
         self.screen = screen
@@ -118,6 +131,7 @@ final class ScreensaverWindow {
         self.sourcesOverride = sourcesOverride
         self.scaling = scaling
         self.startOffset = startOffset
+        self.dismissesOnAnyInput = dismissesOnAnyInput
         // NSWindow's screen: parameter interprets contentRect as RELATIVE to
         // that screen's origin — so passing screen.frame (already in global
         // coords) together with screen: secondaryScreen double-applies the
@@ -171,14 +185,25 @@ final class ScreensaverWindow {
     }
 
     func activate() {
-        window.makeKeyAndOrderFront(nil)
-
-        // Tahoe tightened cursor-visibility policy — no single mechanism is
-        // reliable for an LSUIElement app at .screenSaver level. Activate the
-        // app so the CG-level hide counts as frontmost, then hide system-wide.
-        // The hide is ref-counted; deactivate() pairs it with a Show.
-        NSApp.activate(ignoringOtherApps: true)
-        CGDisplayHideCursor(CGMainDisplayID())
+        if dismissesOnAnyInput {
+            window.makeKeyAndOrderFront(nil)
+            // Tahoe tightened cursor-visibility policy — no single mechanism is
+            // reliable for an LSUIElement app at .screenSaver level. Activate the
+            // app so the CG-level hide counts as frontmost, then hide system-wide.
+            // The hide is ref-counted; deactivate() pairs it with a Show.
+            NSApp.activate(ignoringOtherApps: true)
+            CGDisplayHideCursor(CGMainDisplayID())
+        } else {
+            // Show without taking key window or app-activation status — doing
+            // either would steal keyboard focus from whatever the user is
+            // actually working in on another display, which single-screen
+            // "art mode" must never do. The cursor still hides itself while
+            // it's over this window's own pixels: CursorHidingView's cursor
+            // rects work regardless of key status (see its header comment) —
+            // it's only the belt-and-suspenders CG-level hide above that
+            // needs the app to be frontmost, so it's skipped here.
+            window.orderFrontRegardless()
+        }
 
         stage.start()
 
@@ -215,6 +240,10 @@ final class ScreensaverWindow {
     /// Waiting for stillness does have an upper bound, because it measures
     /// the pause between two gestures rather than the length of one.
     private func installDismissMonitor() {
+        guard dismissesOnAnyInput else {
+            installSingleScreenDismissMonitor()
+            return
+        }
         dismissArmed = false
         scheduleSettle()
         // .flagsChanged is intentionally OMITTED. Carbon consumes the
@@ -250,6 +279,30 @@ final class ScreensaverWindow {
         }
     }
 
+    /// Single-screen "art mode": a click, and only a click, landing on THIS
+    /// window stops it. Not a keystroke — the keyboard has no "which
+    /// screen" concept, and every other display is still in normal use —
+    /// and not the cursor merely passing over another screen or app. No
+    /// settle-arming needed either, unlike the all-displays monitor above:
+    /// a menu item fires on mouse-UP and this only watches mouse-DOWN, so
+    /// the click that started this can never itself be mistaken for the
+    /// click that stops it. Every other window (including this app's other
+    /// single-screen windows, if any) is left completely alone: the event
+    /// is returned unmodified rather than swallowed.
+    private func installSingleScreenDismissMonitor() {
+        eventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            guard let self = self, event.window === self.window else { return event }
+            if let m = self.eventMonitor {
+                NSEvent.removeMonitor(m)
+                self.eventMonitor = nil
+            }
+            self.onDismiss()
+            return nil
+        }
+    }
+
     /// Restarted by every movement while disarmed, so it only fires once the
     /// pointer has actually stopped.
     private func scheduleSettle() {
@@ -270,9 +323,15 @@ final class ScreensaverWindow {
         }
         settleGeneration &+= 1
         dismissArmed = false
-        // Match the CGDisplayHideCursor from activate(). The hide is
-        // ref-counted — an unpaired hide leaves the cursor invisible for
-        // everything else the user does afterwards.
+        // Match the CGDisplayHideCursor from activate() — only called there,
+        // and only undone here, under the same condition. An unpaired Show
+        // would decrement the system's ref-counted hide state, potentially
+        // leaving some other in-flight hide's cursor visible too early.
+        guard dismissesOnAnyInput else {
+            stage.stop()
+            window.orderOut(nil)
+            return
+        }
         CGDisplayShowCursor(CGMainDisplayID())
         stage.stop()
         window.orderOut(nil)

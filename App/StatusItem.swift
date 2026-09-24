@@ -3,18 +3,30 @@ import AppKit
 /// Single user-visible touchpoint for the app — a small SF Symbol in the menu
 /// bar. Click it for a menu of actions: start playing immediately, open
 /// settings, check for updates, quit.
-final class StatusItem {
+///
+/// `NSObject` (rather than a plain Swift class, like the rest of this file
+/// could otherwise be) purely so it can be `NSMenuDelegate` and receive
+/// `menuWillOpen` — needed to keep the per-display rows' Play/Stop wording
+/// current even when nothing about the screens themselves has changed.
+final class StatusItem: NSObject, NSMenuDelegate {
 
     private var item: NSStatusItem?
     private weak var appDelegate: AppDelegate?
-    /// The Suspend/Resume row, kept so its title can flip in place —
-    /// there's only ever this one dynamic item here, so a full menu rebuild
-    /// (as the per-display feature would need) is more machinery than this
-    /// warrants.
+    /// The Suspend/Resume row, kept so its title can flip in place. Also the
+    /// fixed point per-display rows are (re)inserted directly above —
+    /// looked up by identity rather than a cached index, since
+    /// inserting/removing rows shifts everything below it — so Suspend/Resume
+    /// always stays the last row of the group, after Play Now and every
+    /// display row.
     private var suspendResumeItem: NSMenuItem!
+    /// The rows currently inserted for `rebuildDisplayRows()` to remove
+    /// before rebuilding, so a rebuild never leaves a stale row behind for a
+    /// display that's since disconnected.
+    private var perDisplayItems: [NSMenuItem] = []
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
+        super.init()
         configure()
     }
 
@@ -39,12 +51,15 @@ final class StatusItem {
         // Redraw the status icon when the display configuration changes — the
         // menu bar's effective thickness can shrink (e.g. moving from a notched
         // display to an external one) and leave the pre-rendered glyph cropped.
+        // The same notification also drives the per-display rows below, the
+        // same trigger Settings' own connected-displays list uses.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self, let item = self.item else { return }
-            self.applyIcon(to: item)
+            guard let self else { return }
+            if let item = self.item { self.applyIcon(to: item) }
+            self.rebuildDisplayRows()
         }
 
         // Covers both ways this can change: the menu item below, and the
@@ -57,6 +72,7 @@ final class StatusItem {
         }
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.addItem(withTitle: L10n.string("menu.about", defaultValue: "About Save Cannes"),
                      action: #selector(showAbout), keyEquivalent: "")
             .target = self
@@ -82,6 +98,7 @@ final class StatusItem {
         item.menu = menu
         self.item = item
         refreshSuspendResumeState()
+        rebuildDisplayRows()
     }
 
     /// Keeps the menu item's title and the status icon in step with
@@ -92,6 +109,61 @@ final class StatusItem {
             ? L10n.string("menu.resume", defaultValue: "Resume")
             : L10n.string("menu.suspend", defaultValue: "Suspend")
         if let item { applyIcon(to: item) }
+    }
+
+    /// One toggle row per connected display, letting a spare monitor be
+    /// pressed into playing on its own — "temporarily allocate one screen"
+    /// rather than the whole desktop. Only meaningful with more than one
+    /// display; with exactly one, "play on it" is just Play Now again, so no
+    /// rows are added at all rather than one that duplicates that item.
+    /// Ordered by display name, between Play Now and Suspend/Resume — Play
+    /// Now always comes first, Suspend/Resume always stays last in the
+    /// group. Rebuilt (not diffed) on every screen connect/disconnect and
+    /// every menu opening: cheap for the handful of rows involved, and the
+    /// simplest way to keep both the row count and each row's Play/Stop
+    /// wording honest — the latter can change from clicking the display
+    /// itself, not just from this menu.
+    private func rebuildDisplayRows() {
+        guard let menu = item?.menu else { return }
+        // Remove the old rows BEFORE reading suspendResumeItem's index, not
+        // after — each removal shifts everything below it up by one, so an
+        // index read beforehand is stale the moment there's anything to
+        // remove. Reading it stale doesn't fail; it silently inserts the new
+        // rows too low, past Suspend/Resume — which only ever showed up
+        // correctly grouped on the very first build, when there was nothing
+        // yet to remove.
+        for row in perDisplayItems { menu.removeItem(row) }
+        perDisplayItems.removeAll()
+
+        let anchorIndex = menu.index(of: suspendResumeItem)
+        guard anchorIndex >= 0 else { return }
+
+        let screens = NSScreen.screens.sorted { $0.localizedName < $1.localizedName }
+        guard screens.count > 1 else { return }
+
+        // Inserted directly above Suspend/Resume, which is why it always
+        // ends up last: every insertion here pushes it down by one.
+        var insertAt = anchorIndex
+        for screen in screens {
+            let playing = appDelegate?.isPlayingSingleScreen(screen) ?? false
+            let title = playing
+                ? L10n.format("menu.stop_display_format", defaultValue: "Stop %@", screen.localizedName)
+                : L10n.format("menu.play_display_format", defaultValue: "Play on %@", screen.localizedName)
+            let row = NSMenuItem(title: title, action: #selector(toggleDisplay(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = screen
+            menu.insertItem(row, at: insertAt)
+            perDisplayItems.append(row)
+            insertAt += 1
+        }
+    }
+
+    /// Refreshes both of this menu's dynamic bits of state right before it's
+    /// shown, alongside the notification-driven refresh each already has —
+    /// belt-and-suspenders is cheap for two lookups on a menu open.
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildDisplayRows()
+        refreshSuspendResumeState()
     }
 
     /// SF Symbol — a stack of film frames. Template image so the system tints
@@ -163,6 +235,11 @@ final class StatusItem {
 
     @objc private func activateNow() {
         appDelegate?.activateNow(source: "status menu")
+    }
+
+    @objc private func toggleDisplay(_ sender: NSMenuItem) {
+        guard let screen = sender.representedObject as? NSScreen else { return }
+        appDelegate?.toggleSingleScreen(screen)
     }
 
     @objc private func openSettings() {

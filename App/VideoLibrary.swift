@@ -27,6 +27,28 @@ enum TitleMode: Int {
     case repeatedly = 2
 }
 
+/// When Save Cannes plays audio.
+///
+/// A single setting rather than a toggle plus a second one for single-screen
+/// "art mode" — two flags deciding the same question by different rules is
+/// exactly what produced the bug the dismiss-monitor rework had to fix
+/// elsewhere in this app, and the failure mode here would be the same kind:
+/// sound enabled, then unclear whether art mode counts.
+enum SoundMode: Int {
+    case never = 0
+    /// The main display, only while the synced all-displays saver plays —
+    /// by idle, Play Now, or its hotkey. Every display runs its own
+    /// playback, so more than one would overlap the same soundtrack a few
+    /// frames apart.
+    case allDisplays = 1
+    /// Everything `allDisplays` does, plus the first single-screen "art
+    /// mode" session — whichever display that turns out to be. Not every
+    /// one of them: two decorative screens both playing sound is the same
+    /// overlap problem `allDisplays` exists to avoid, just between two
+    /// manual sessions instead of two automatic ones.
+    case singleScreenToo = 2
+}
+
 /// How each video is fitted to the display it plays on.
 enum VideoScaling: Int, Codable {
     /// Fill the display; overflow on the long axis is cropped away.
