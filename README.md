@@ -250,7 +250,7 @@ Save Cannes waits for its own idle timeout. macOS keeps two idle clocks of its o
 
 The display-off timer is the one people miss. On battery, a laptop often turns its display off after two minutes, which is sooner than Save Cannes' default of five. When a macOS timer is at or under the idle timeout, Settings says so in orange under the idle timeout and names the System Settings row to change. Set **Start Screen Saver when inactive** to **Never** (Save Cannes is your screen saver now), or give the display-off timer more time than the idle timeout.
 
-While Save Cannes is playing, it stops when something covers it: the lock screen (whether Save Cannes locked it, or you chose Lock Now, closed the lid or used a hot corner), macOS's own screen saver, or the display going to sleep. The picture and the sound stop, and nothing plays behind the lock screen. When you come back, Save Cannes is dismissed as usual, and if **Lock screen when dismissed** is on, the Mac locks first.
+While Save Cannes is playing, it stops when something covers it: the lock screen (whether Save Cannes locked it, or you chose Lock Now, closed the lid or used a hot corner), macOS's own screen saver, or the display going to sleep. The picture and the sound stop, and nothing plays behind the lock screen. When you come back, Save Cannes is dismissed as usual, and if **Lock screen when dismissed** is on, the Mac locks first. A single-screen window is ended instead, and never locks the Mac.
 
 ### If a video wedges
 
@@ -345,7 +345,7 @@ Other targets:
 
 **It's been running for hours and nobody's there.** Set Settings → Dismiss → "Auto dismiss after" to a number of minutes: a single activation then dismisses itself after that long — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac. With "Lock screen when dismissed" on, this stops decoding and playback immediately, which is most of what you're after — but the player itself isn't fully released until the Mac is actually unlocked, same as a manual dismiss with that toggle on.
 
-**No sound.** Check Settings → Playback, and note that with multiple displays the soundtrack plays on the main display's copy only.
+**No sound.** Check Settings → Playback → "Play sound". With multiple displays the soundtrack plays on the main display's copy only, and a single-screen window has sound only with **All displays and one single screen**, and then only the first one you start.
 
 **A video seems to end early.** Turn logging on and look for `watchdog:` lines — the watchdog only moves on when the playhead has genuinely stopped, and it names the moment it did. If there are no such lines, the file ended where it says it ends; check its duration in Finder's Get Info.
 
