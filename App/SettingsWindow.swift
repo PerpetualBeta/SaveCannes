@@ -24,7 +24,7 @@ struct SaveCannesSettingsContent: View {
 
     @AppStorage("playbackOrder")  private var order: PlaybackOrder = .random
     @AppStorage("videoScaling")   private var scaling: VideoScaling = .fullScreen
-    @AppStorage("soundEnabled")   private var soundEnabled: Bool = false
+    @AppStorage("soundMode")      private var soundMode: SoundMode = .never
     @AppStorage("differentVideoPerDisplay") private var differentVideoPerDisplay: Bool = true
     @AppStorage("photosEnabled")   private var photosEnabled: Bool = true
     @AppStorage("photoSeconds")    private var photoSeconds: Int = 8
@@ -205,8 +205,15 @@ struct SaveCannesSettingsContent: View {
             }
 
             captioned(L10n.string("settings.sound_note",
-                                 defaultValue: "With more than one display, sound plays on the main one only. Each runs its own playback, so they would overlap.")) {
-                Toggle(L10n.string("settings.sound", defaultValue: "Play sound"), isOn: $soundEnabled)
+                                 defaultValue: "With more than one display, sound plays only on the main one when all displays play, or on the first single screen you start. This stops two soundtracks overlapping.")) {
+                Picker(L10n.string("settings.sound", defaultValue: "Play sound:"), selection: $soundMode) {
+                    Text(L10n.string("settings.sound_never", defaultValue: "Never"))
+                        .tag(SoundMode.never)
+                    Text(L10n.string("settings.sound_all_displays", defaultValue: "All displays"))
+                        .tag(SoundMode.allDisplays)
+                    Text(L10n.string("settings.sound_single_screen_too", defaultValue: "All displays and one single screen"))
+                        .tag(SoundMode.singleScreenToo)
+                }
             }
         }
 

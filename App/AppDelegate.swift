@@ -76,6 +76,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// screen saver starting/stopping, and the display itself sleeping. See
     /// `observeMacScreenState()`.
     private var macScreenStateObservers: [NSObjectProtocol] = []
+    /// Windows opened to play on exactly one display — "temporarily turn this
+    /// spare monitor into a piece of art" — keyed by `DisplayIdentity.id(for:)`.
+    /// Wholly independent of `windows`/idle polling: it's a manual, indefinite
+    /// activation the user starts and stops per display from the status menu,
+    /// not something idle time or a hotkey ever touches. Coverage (a lock,
+    /// macOS's own screen saver, or display sleep) pauses these too — see
+    /// `pausePlayback(reason:)` — but a manual stop never locks, so their own
+    /// dismissal always goes through `stopSingleScreen`, never
+    /// `dismissWindows(triggerLock:)`.
+    private var singleScreenWindows: [String: ScreensaverWindow] = [:]
+    /// Which single-screen session, if any, currently owns audio — at most
+    /// one, ever. See the claim/release comments in `startSingleScreen`/
+    /// `stopSingleScreen`.
+    private var singleScreenAudioOwnerID: String?
     private var screenChangeObserver: NSObjectProtocol?
     /// Signature of the display layout the live windows were built for.
     /// `nil` when no windows exist. See `handleScreenChange`.
@@ -150,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "autoDismissMinutes":        0,
         "playbackOrder":             PlaybackOrder.random.rawValue,
         "videoScaling":              VideoScaling.fullScreen.rawValue,
-        "soundEnabled":              false,
+        "soundMode":                 SoundMode.never.rawValue,
         "differentVideoPerDisplay":  true,
         "titleMode":                 TitleMode.atStart.rawValue,
         "titleRepeatMinutes":        5,
@@ -182,8 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lockOnDismiss: Bool {
         UserDefaults.standard.bool(forKey: "lockOnDismiss")
     }
-    private var soundEnabled: Bool {
-        UserDefaults.standard.bool(forKey: "soundEnabled")
+    private var soundMode: SoundMode {
+        SoundMode(rawValue: UserDefaults.standard.integer(forKey: "soundMode")) ?? .never
     }
     private var playbackOrder: PlaybackOrder {
         PlaybackOrder(rawValue: UserDefaults.standard.integer(forKey: "playbackOrder")) ?? .random
@@ -198,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
+        migrateSoundModeIfNeeded()
         installEditMenu()
         scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s, auto dismiss \(autoDismissSeconds > 0 ? "\(Int(autoDismissSeconds / 60))min" : "unlimited")"
               + (activationSuspended ? ", activation SUSPENDED from a previous session" : ""))
@@ -332,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 scLog("woke with the saver up and the screen UNLOCKED — locking, not just dismissing")
             }
             self.dismissWindows(triggerLock: mustLock)
+            self.dismissPausedSingleScreenWindows()
         }
 
         wakeObservers.append(ws.addObserver(
@@ -391,37 +407,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 
-    /// Pause our windows in place, once. The lock observer above, the display
+    /// Pause our windows in place, once — the ordinary all-displays saver
+    /// AND any single-screen "art mode" windows, whichever happens to be up;
+    /// `showWindows()`/`toggleSingleScreen` never let both run at once, so
+    /// there is nothing to disambiguate. The lock observer above, the display
     /// and screen-saver handlers below and `observeLockThenPause` can all hear
     /// about the same event; whichever is first pauses and logs, and
-    /// `playbackPaused` stops the rest. There is no resume: a paused saver is
-    /// only ever dismissed.
+    /// `playbackPaused` stops the rest. There is no resume for the
+    /// all-displays saver — it is only ever dismissed, locking first if
+    /// asked — but a single-screen window IS explicitly ended for the same
+    /// reason, always through `stopSingleScreen`, never a lock: see
+    /// `dismissPausedSingleScreenWindows()`.
     private func pausePlayback(reason: String) {
-        guard !windows.isEmpty, !playbackPaused else { return }
+        guard !playbackPaused, !windows.isEmpty || !singleScreenWindows.isEmpty else { return }
         playbackPaused = true
         for win in windows { win.pauseAnimation() }
+        for (_, win) in singleScreenWindows { win.pauseAnimation() }
         scLog("\(reason) — pausing playback; the saver stays up until it is dismissed")
     }
 
     private func handleNativeScreensaverStarted() {
         nativeScreensaverRunning = true
-        guard !windows.isEmpty else {
+        guard !windows.isEmpty || !singleScreenWindows.isEmpty else {
             scLog("com.apple.screensaver.didstart — noted; no windows of ours were up")
             return
         }
         pausePlayback(reason: "com.apple.screensaver.didstart (macOS's own screen saver is over ours)")
     }
 
-    /// Ours has sat paused underneath, so end it now, through the normal
-    /// dismiss path so that lock-on-dismiss still locks. Then hold activation
-    /// back for a full idle threshold: idle time kept climbing the whole time
-    /// the native screen saver was up, and without this the next tick would
-    /// reactivate the instant it ends.
+    /// Ours has sat paused underneath, so end it now: the all-displays saver
+    /// through the normal dismiss path so that lock-on-dismiss still locks,
+    /// and any single-screen window through its own, never-locking path.
+    /// Then hold activation back for a full idle threshold: idle time kept
+    /// climbing the whole time the native screen saver was up, and without
+    /// this the next tick would reactivate the instant it ends.
     private func handleNativeScreensaverStopped() {
         guard nativeScreensaverRunning else { return }
         nativeScreensaverRunning = false
         activationAllowedAfter = Date().addingTimeInterval(idleThresholdSeconds)
         scLog("com.apple.screensaver.didstop — macOS's own screen saver ended; idle countdown restarted")
+        dismissPausedSingleScreenWindows()
         dismissWindows(triggerLock: lockOnDismiss)
     }
 
@@ -430,11 +455,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `displayAsleep` and dismisses the paused saver, locking if it must.
     private func handleDisplaySleep() {
         displayAsleep = true
-        guard !windows.isEmpty else {
+        guard !windows.isEmpty || !singleScreenWindows.isEmpty else {
             scLog("screensDidSleep — noted; no windows of ours were up")
             return
         }
         pausePlayback(reason: "screensDidSleep (the display is going dark)")
+    }
+
+    /// Ends every single-screen "art mode" window that `pausePlayback`
+    /// paused, once whatever covered it is over. Always through
+    /// `stopSingleScreen` — the same path a click on the screen itself
+    /// takes — never the lock-aware `dismissWindows`: stopping a decorative
+    /// screen must never lock the Mac, regardless of what paused it.
+    /// `windows.isEmpty` guards `dismissWindows` itself, so calling both
+    /// unconditionally alongside it (see the two call sites) is safe: each
+    /// is a no-op against whichever of the two wasn't actually the one
+    /// paused.
+    private func dismissPausedSingleScreenWindows() {
+        guard playbackPaused, !singleScreenWindows.isEmpty else { return }
+        for id in Array(singleScreenWindows.keys) { stopSingleScreen(id: id) }
+        playbackPaused = false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -460,6 +500,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         macScreenStateObservers.removeAll()
         cleanupLockObserver()
         dismissWindows(triggerLock: false)
+        for (_, win) in singleScreenWindows { win.deactivate() }
+        singleScreenWindows.removeAll()
         scLog("applicationWillTerminate")
     }
 
@@ -503,6 +545,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             scLog("login item: first-run registration failed — \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Sound mode migration
+
+    /// `soundEnabled` (a plain on/off) is retired in favour of `SoundMode`,
+    /// which also distinguishes single-screen "art mode" from the
+    /// all-displays saver. Runs once, ever, per the same one-time-flag
+    /// pattern as `registerAtLoginIfNeeded()` above.
+    ///
+    /// A fresh install has neither key and gets `SoundMode.never` from
+    /// `registeredDefaults` alone — nothing to migrate there. An existing
+    /// install's old boolean maps straight across, deliberately never
+    /// upgrading anyone into the new `singleScreenToo` behaviour on their
+    /// behalf: off stays off, and on becomes exactly what on used to mean —
+    /// the all-displays saver's one audioScreen, nothing more.
+    private func migrateSoundModeIfNeeded() {
+        let migratedKey = "didMigrateSoundModeFromBool"
+        guard !UserDefaults.standard.bool(forKey: migratedKey) else { return }
+        UserDefaults.standard.set(true, forKey: migratedKey)
+        guard UserDefaults.standard.object(forKey: "soundEnabled") != nil else { return }
+        let wasOn = UserDefaults.standard.bool(forKey: "soundEnabled")
+        UserDefaults.standard.set(
+            (wasOn ? SoundMode.allDisplays : SoundMode.never).rawValue,
+            forKey: "soundMode")
+        scLog("migrated soundEnabled=\(wasOn) to soundMode=\(wasOn ? "allDisplays" : "never")")
     }
 
     // MARK: - Hotkeys
@@ -651,6 +718,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window management
 
     private func showWindows() {
+        // The all-displays saver supersedes any single-screen "art mode"
+        // window — both would otherwise cover the same display with two
+        // independent players. Stop those first rather than leaving them to
+        // fight over the screen. They are not brought back when this saver
+        // ends. A single-screen window that anything else covers (a lock,
+        // display sleep, macOS's own screen saver) is ended, not resumed, so
+        // this cover is treated the same way. One rule for every cover.
+        for id in Array(singleScreenWindows.keys) { stopSingleScreen(id: id) }
         // Only start the clock on a genuine new activation. A rebuild
         // (handleScreenChange, via tearDownWindows(isRebuild: true)) leaves
         // activatedAt already set — preserve it rather than restarting the
@@ -694,7 +769,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ?? .fullScreen
             let win = ScreensaverWindow(
                 screen: screen,
-                audioEnabled: soundEnabled && screen == audioScreen,
+                audioEnabled: soundMode != .never && screen == audioScreen,
                 sharedPlaylist: shared,
                 sourcesOverride: configuredSources,
                 scaling: scaling,
@@ -831,6 +906,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scLog("dismissed screensaver windows")
     }
 
+    // MARK: - Single-screen "art mode"
+
+    /// Whether this display currently has its own standalone activation
+    /// running, for the status menu's per-display rows.
+    func isPlayingSingleScreen(_ screen: NSScreen) -> Bool {
+        singleScreenWindows[DisplayIdentity.id(for: screen)] != nil
+    }
+
+    /// Whether this display may play on its own. Not the primary display
+    /// when "Displays have separate Spaces" is off: that display then holds
+    /// the only menu bar and the Dock, and a window at `.screenSaver` level
+    /// covers both, for every app on every display. A click on it still
+    /// ends it, but the menu's Stop row is under it. With separate Spaces
+    /// on, every display has its own menu bar, so any one may play. The
+    /// setting only changes at logout, so reading it here is enough.
+    func canPlaySingleScreen(_ screen: NSScreen) -> Bool {
+        NSScreen.screensHaveSeparateSpaces || screen != NSScreen.screens.first
+    }
+
+    /// Start or stop a single display's own activation, independent of every
+    /// other display. The status menu's per-display row calls this.
+    func toggleSingleScreen(_ screen: NSScreen) {
+        let id = DisplayIdentity.id(for: screen)
+        if singleScreenWindows[id] != nil {
+            stopSingleScreen(id: id)
+            return
+        }
+        // The all-displays saver already covers this screen — starting a
+        // second, independent player on top of it would just fight over the
+        // same pixels.
+        guard windows.isEmpty else {
+            scLog("single-screen: ignored request for \(screen.localizedName) — the full-screen saver is already active")
+            return
+        }
+        guard canPlaySingleScreen(screen) else {
+            scLog("single-screen: ignored request for \(screen.localizedName) — it holds the only menu bar and the Dock")
+            return
+        }
+        startSingleScreen(screen, id: id)
+    }
+
+    private func startSingleScreen(_ screen: NSScreen, id: String) {
+        // Same per-display source/scaling resolution as the all-displays
+        // path, so a display with its own profile plays what it's configured
+        // for here too; one left unconfigured falls back to the global list.
+        let profile = DisplayProfileStore.profile(for: screen)
+        let configuredSources = profile.map { profile in
+            VideoLibrary.sources.filter { profile.sourceIDs.contains($0.id) }
+        }
+        let scaling = profile?.scaling
+            ?? VideoScaling(rawValue: UserDefaults.standard.integer(forKey: "videoScaling"))
+            ?? .fullScreen
+        // At most one single-screen session ever gets audio, same reasoning
+        // as the all-displays saver's own audioScreen: two independent
+        // players both talking would overlap the same soundtrack a few
+        // frames apart. First to start claims it and keeps it for as long
+        // as it runs; a later session starting while one already has it
+        // just stays silent, rather than the two swapping mid-session.
+        let audioEnabled = soundMode == .singleScreenToo && singleScreenAudioOwnerID == nil
+        if audioEnabled { singleScreenAudioOwnerID = id }
+        let win = ScreensaverWindow(
+            screen: screen,
+            audioEnabled: audioEnabled,
+            sharedPlaylist: nil,
+            sourcesOverride: configuredSources,
+            scaling: scaling,
+            startOffset: 0,
+            dismissesOnAnyInput: false
+        ) { [weak self] in
+            // Never lock here, regardless of the "lock on dismiss" setting.
+            // That setting means "I've stepped away from the whole Mac" —
+            // it doesn't apply to clicking a spare monitor that was playing
+            // something ornamental while the rest of the session stayed in
+            // normal use.
+            self?.stopSingleScreen(id: id)
+        }
+        singleScreenWindows[id] = win
+        win.activate()
+        scLog("single-screen: playing on \(screen.localizedName)\(audioEnabled ? " (with sound)" : "")")
+    }
+
+    private func stopSingleScreen(id: String) {
+        guard let win = singleScreenWindows.removeValue(forKey: id) else { return }
+        // Freed for the next session to claim, not handed to one already
+        // running silently — see the claim comment in startSingleScreen.
+        if singleScreenAudioOwnerID == id { singleScreenAudioOwnerID = nil }
+        win.deactivate()
+        scLog("single-screen: stopped on \(win.screen.localizedName)")
+    }
+
+    /// Drops any single-screen window whose display has been disconnected.
+    /// Without this a window would sit on a `NSScreen` that no longer exists,
+    /// and the status menu would show it as still playing forever.
+    private func reconcileSingleScreenWindows() {
+        let currentIDs = Set(NSScreen.screens.map { DisplayIdentity.id(for: $0) })
+        for (id, win) in singleScreenWindows where !currentIDs.contains(id) {
+            win.deactivate()
+            singleScreenWindows.removeValue(forKey: id)
+            if singleScreenAudioOwnerID == id { singleScreenAudioOwnerID = nil }
+            scLog("single-screen: \(win.screen.localizedName) disconnected — stopped")
+        }
+    }
+
     /// Fingerprint of the physical display layout — the only thing a
     /// screensaver window is actually built from.
     ///
@@ -890,6 +1068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// is unchanged and the loop stops at the first hop. A debounce would
     /// not fix it: the self-posted notification just arrives later.
     private func handleScreenChange() {
+        reconcileSingleScreenWindows()
         guard !windows.isEmpty else { return }
         let current = Self.screenLayoutSignature()
         guard current != builtForLayout else {
@@ -993,7 +1172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func currentScreensaverWindow() -> ScreensaverWindow? {
         let mouse = NSEvent.mouseLocation
-        return windows.first(where: { NSPointInRect(mouse, $0.screen.frame) })
-            ?? windows.first
+        let all = windows + Array(singleScreenWindows.values)
+        return all.first(where: { NSPointInRect(mouse, $0.screen.frame) })
+            ?? all.first
     }
 }
