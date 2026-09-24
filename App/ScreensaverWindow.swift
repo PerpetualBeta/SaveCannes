@@ -278,9 +278,10 @@ final class ScreensaverWindow {
         window.orderOut(nil)
     }
 
-    /// Halt playback without tearing the window down. Used while the system
-    /// lock screen covers us — there is no point decoding video, or playing
-    /// its soundtrack, for a picture nobody can see.
+    /// Halt playback without tearing the window down. Used while the lock
+    /// screen, macOS's own screen saver or a sleeping display covers us —
+    /// there is no point decoding video, or playing its soundtrack, for a
+    /// picture nobody can see.
     func pauseAnimation() {
         stage.pause()
     }

@@ -232,6 +232,14 @@ The text is the video's **own embedded title** when the file carries one, and it
 
 Captions are drawn with a soft shadow, because a video screensaver can't know what it's drawing over and white-on-white is otherwise a real possibility on the wrong shot.
 
+### Idle timeout vs. macOS's own timers
+
+Save Cannes waits for its own idle timeout. macOS keeps two idle clocks of its own in System Settings: **Start Screen Saver when inactive**, and **Turn display off when inactive** (on a laptop, one for battery and one for the power adapter). Whichever of those fires first wins. If it fires before Save Cannes' idle timeout, the screen is already showing macOS's screen saver or has gone dark, and Save Cannes does not start into either.
+
+The display-off timer is the one people miss. On battery, a laptop often turns its display off after two minutes, which is sooner than Save Cannes' default of five. When a macOS timer is at or under the idle timeout, Settings says so in orange under the idle timeout and names the System Settings row to change. Set **Start Screen Saver when inactive** to **Never** (Save Cannes is your screen saver now), or give the display-off timer more time than the idle timeout.
+
+While Save Cannes is playing, it stops when something covers it: the lock screen (whether Save Cannes locked it, or you chose Lock Now, closed the lid or used a hot corner), macOS's own screen saver, or the display going to sleep. The picture and the sound stop, and nothing plays behind the lock screen. When you come back, Save Cannes is dismissed as usual, and if **Lock screen when dismissed** is on, the Mac locks first.
+
 ### If a video wedges
 
 Left alone, every video plays from beginning to end; the only things that cut one short are your own input, waking or unlocking the Mac, and a display being added, removed or reconfigured (which rebuilds the windows and restarts playback).
@@ -316,6 +324,8 @@ Other targets:
 **The folder is right but it says no videos were found.** Save Cannes lists files by type, not by extension. If the files aren't recognised as movies by macOS — check one in Finder's Get Info — they won't be listed. An external drive that isn't mounted looks the same as an empty folder.
 
 **It skips a file I know plays in QuickTime.** Then it isn't skipping it for the reason you think. Turn logging on (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES`), let the saver run, and read `~/Library/Logs/Save Cannes/savecannes.log` — every skip is logged with the reason AVFoundation gave.
+
+**It never comes on, even after sitting idle for ages.** Look under the idle timeout in Settings → Activation. An orange note there means one of macOS's own timers fires first every time. See [Idle timeout vs. macOS's own timers](#idle-timeout-vs-macoss-own-timers).
 
 **The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
 

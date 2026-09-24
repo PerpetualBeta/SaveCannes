@@ -47,6 +47,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Mirrors `activationHeldByLock`, for the case where another app is
     /// deliberately keeping the display awake. See `DisplayWake`.
     private var activationHeldByAssertion = false
+    /// Mirrors `activationHeldByLock`, for macOS's own screen saver already
+    /// being up. See `nativeScreensaverRunning`.
+    private var activationHeldByNativeScreensaver = false
+    /// True between a `com.apple.screensaver.didstart` and its matching
+    /// `didstop` — macOS's own screen saver, not ours. Tracked from the
+    /// notification rather than polled, since there's no "is it running
+    /// right now" query to ask. See `observeMacScreenState()`.
+    private var nativeScreensaverRunning = false
+    /// Mirrors `activationHeldByLock`, for the display itself being asleep.
+    /// See `displayAsleep`.
+    private var activationHeldByDisplaySleep = false
+    /// True from `NSWorkspace.screensDidSleepNotification` until the
+    /// matching `screensDidWakeNotification` — the display's own idle
+    /// sleep, distinct from the screen saver (which may never run at all if
+    /// the display-sleep timer is the shorter of the two) and from full
+    /// machine sleep. Cleared by the shared wake handler in
+    /// `observeWakeAndUnlock`, since that already fires on this same
+    /// notification among others.
+    private var displayAsleep = false
+    /// True while our windows are up but paused because something covers
+    /// them: the lock screen, macOS's own screen saver, or a sleeping
+    /// display. See `pausePlayback(reason:)`. Also stops a display-layout
+    /// change from rebuilding the windows, which would start them playing
+    /// again behind whatever covers them. See `handleScreenChange`.
+    private var playbackPaused = false
+    /// Watches macOS's own screen state: the login-session lock, the native
+    /// screen saver starting/stopping, and the display itself sleeping. See
+    /// `observeMacScreenState()`.
+    private var macScreenStateObservers: [NSObjectProtocol] = []
     private var screenChangeObserver: NSObjectProtocol?
     /// Signature of the display layout the live windows were built for.
     /// `nil` when no windows exist. See `handleScreenChange`.
@@ -215,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleScreenChange()
         }
         observeWakeAndUnlock()
+        observeMacScreenState()
     }
 
     /// An `LSUIElement` app is given **no main menu**, and the standard editing
@@ -281,6 +311,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // diagnosis a fortnight of log-reading.
         let onWake: (Notification) -> Void = { [weak self] note in
             guard let self = self else { return }
+            // Every one of the three notifications this closure handles
+            // implies the display is no longer asleep — unlocking or typing
+            // at loginwindow needs to see the screen, same as any wake.
+            self.displayAsleep = false
             self.activationAllowedAfter = Date().addingTimeInterval(Self.wakeGraceSeconds)
             scLog("wake/unlock event (\(note.name.rawValue)) — activation suppressed for \(Int(Self.wakeGraceSeconds))s")
             // The three notifications do NOT mean the same thing. An unlock
@@ -311,6 +345,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil, queue: .main, using: onWake))
     }
 
+    /// Pause our own playback the moment something else takes over the
+    /// screen: the login-session lock, macOS's own screen saver, or the
+    /// display going to sleep. It makes no difference whether we asked for
+    /// it or it happened on its own.
+    ///
+    /// Before this, only a lock **we ourselves requested** (via
+    /// `dismissWindows(triggerLock: true)`) was ever noticed. An external
+    /// lock (Lock Now, lid close, a hot corner) went unheard, so decoding,
+    /// the watchdog and a soundtrack kept running behind a screen nobody
+    /// could see for as long as the Mac stayed locked. macOS's own screen
+    /// saver sits at the same `.screenSaver` level as ours, so ours kept
+    /// running underneath it. And display sleep was not observed at all.
+    ///
+    /// **Pause, never tear down.** Every one of these leaves the saver up, on
+    /// purpose. `onWake` locks on wake only when `saverIsUp`, so windows torn
+    /// down while the display slept would hand a lock-on-dismiss user back an
+    /// unlocked desktop whenever macOS's own lock delay is not immediate. A
+    /// paused saver costs nothing, and the ordinary dismiss path ends it,
+    /// locking first if the user asked for that.
+    private func observeMacScreenState() {
+        let dn = DistributedNotificationCenter.default()
+        macScreenStateObservers.append(dn.addObserver(
+            forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.pausePlayback(reason: "com.apple.screenIsLocked")
+        })
+        macScreenStateObservers.append(dn.addObserver(
+            forName: Notification.Name("com.apple.screensaver.didstart"), object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleNativeScreensaverStarted()
+        })
+        macScreenStateObservers.append(dn.addObserver(
+            forName: Notification.Name("com.apple.screensaver.didstop"), object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleNativeScreensaverStopped()
+        })
+        // Public AppKit API, unlike the two above. On a laptop this is often
+        // the one that fires first: "Turn display off" on battery is two
+        // minutes out of the box, well under most screen-saver delays.
+        macScreenStateObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleDisplaySleep()
+        })
+    }
+
+    /// Pause our windows in place, once. The lock observer above, the display
+    /// and screen-saver handlers below and `observeLockThenPause` can all hear
+    /// about the same event; whichever is first pauses and logs, and
+    /// `playbackPaused` stops the rest. There is no resume: a paused saver is
+    /// only ever dismissed.
+    private func pausePlayback(reason: String) {
+        guard !windows.isEmpty, !playbackPaused else { return }
+        playbackPaused = true
+        for win in windows { win.pauseAnimation() }
+        scLog("\(reason) — pausing playback; the saver stays up until it is dismissed")
+    }
+
+    private func handleNativeScreensaverStarted() {
+        nativeScreensaverRunning = true
+        guard !windows.isEmpty else {
+            scLog("com.apple.screensaver.didstart — noted; no windows of ours were up")
+            return
+        }
+        pausePlayback(reason: "com.apple.screensaver.didstart (macOS's own screen saver is over ours)")
+    }
+
+    /// Ours has sat paused underneath, so end it now, through the normal
+    /// dismiss path so that lock-on-dismiss still locks. Then hold activation
+    /// back for a full idle threshold: idle time kept climbing the whole time
+    /// the native screen saver was up, and without this the next tick would
+    /// reactivate the instant it ends.
+    private func handleNativeScreensaverStopped() {
+        guard nativeScreensaverRunning else { return }
+        nativeScreensaverRunning = false
+        activationAllowedAfter = Date().addingTimeInterval(idleThresholdSeconds)
+        scLog("com.apple.screensaver.didstop — macOS's own screen saver ended; idle countdown restarted")
+        dismissWindows(triggerLock: lockOnDismiss)
+    }
+
+    /// No wake handler of its own: `screensDidWakeNotification` goes through
+    /// the shared closure in `observeWakeAndUnlock`, which clears
+    /// `displayAsleep` and dismisses the paused saver, locking if it must.
+    private func handleDisplaySleep() {
+        displayAsleep = true
+        guard !windows.isEmpty else {
+            scLog("screensDidSleep — noted; no windows of ours were up")
+            return
+        }
+        pausePlayback(reason: "screensDidSleep (the display is going dark)")
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         idleTimer?.invalidate()
         for obs in [screenChangeObserver, statusItemVisibilityObserver, shortcutObserver] {
@@ -323,6 +449,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dn.removeObserver(obs)
         }
         wakeObservers.removeAll()
+        // Mixed centers, like `wakeObservers` above — removeObserver is a
+        // no-op on a center a given token was never registered with, so
+        // calling both on every token is safe and simpler than tracking
+        // which one each came from.
+        for obs in macScreenStateObservers {
+            dn.removeObserver(obs)
+            ws.removeObserver(obs)
+        }
+        macScreenStateObservers.removeAll()
         cleanupLockObserver()
         dismissWindows(triggerLock: false)
         scLog("applicationWillTerminate")
@@ -422,6 +557,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 activationHeldByLock = false
+
+                // Never start into macOS's own screen saver either — same
+                // window level as ours, so there's nothing to gain by
+                // decoding a video that may just end up underneath it.
+                if nativeScreensaverRunning {
+                    if !activationHeldByNativeScreensaver {
+                        scLog("idle threshold reached but macOS's own screen saver is running — not activating")
+                        activationHeldByNativeScreensaver = true
+                    }
+                    return
+                }
+                activationHeldByNativeScreensaver = false
+
+                // Nor into a display that's already asleep — same reasoning
+                // as the screen saver above, and on many Macs this is the
+                // one that actually fires, since the screen saver never
+                // gets a chance to run at all if display sleep is the
+                // shorter timer.
+                if displayAsleep {
+                    if !activationHeldByDisplaySleep {
+                        scLog("idle threshold reached but the display is asleep — not activating")
+                        activationHeldByDisplaySleep = true
+                    }
+                    return
+                }
+                activationHeldByDisplaySleep = false
 
                 // Something else is asking macOS to keep the display on: a
                 // video call, a film, a presentation. Idle time says nobody has
@@ -587,7 +748,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private var lockObserver: NSObjectProtocol?
+    private var lockConfirmObserver: NSObjectProtocol?
     private func observeLockThenPause() {
         // Nothing to wait for if the screen is already locked. macOS locks the
         // session itself when the display sleeps, so a saver dismissed after
@@ -596,29 +757,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // will ever arrive. Waiting the full timeout and then declaring failure
         // is what the log did for four months.
         if LockScreen.screenIsLocked {
-            scLog("screen already locked before the request — pausing, no handshake needed")
-            for win in windows { win.pauseAnimation() }
+            pausePlayback(reason: "screen already locked before our own request")
             return
         }
         let center = DistributedNotificationCenter.default()
         // Idempotent — clear any stale observer from a previous cycle.
-        if let prev = lockObserver { center.removeObserver(prev); lockObserver = nil }
+        if let prev = lockConfirmObserver { center.removeObserver(prev); lockConfirmObserver = nil }
 
-        lockObserver = center.addObserver(
+        // The actual pausing (and its log line) happens in the permanent
+        // observer set up by `observeMacScreenState()`, which hears
+        // this same notification. This one exists only to confirm the lock
+        // we just requested actually happened, for the safety net below.
+        lockConfirmObserver = center.addObserver(
             forName: Notification.Name("com.apple.screenIsLocked"),
             object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
-            scLog("screenIsLocked received — pausing playback, windows stay until unlock")
-            self.cleanupLockObserver()
-            for win in self.windows { win.pauseAnimation() }
+            self?.cleanupLockObserver()
         }
         // Safety net: if no lock notification arrives (SACLockScreenImmediate
         // failed, loginwindow hung, symbol removed in a future macOS — whatever
         // the cause) the saver would otherwise stay up indefinitely with no
         // lock UI over it. Fall back to a normal teardown.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.lockConfirmTimeoutSeconds) { [weak self] in
-            guard let self = self, self.lockObserver != nil else { return }
+            guard let self = self, self.lockConfirmObserver != nil else { return }
             self.cleanupLockObserver()
             // Ask, do not assume. The old line read "lock likely failed", which
             // the app had no way of knowing: all it had observed was a
@@ -626,7 +787,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // conflating them sent three investigations down the wrong road.
             if LockScreen.screenIsLocked {
                 scLog("no screenIsLocked in time, but the screen IS locked — pausing")
-                for win in self.windows { win.pauseAnimation() }
+                self.pausePlayback(reason: "screen confirmed locked (late)")
             } else {
                 scLog("no screenIsLocked in time and the screen is NOT locked — tearing down")
                 self.tearDownWindows()
@@ -635,9 +796,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func cleanupLockObserver() {
-        if let obs = lockObserver {
+        if let obs = lockConfirmObserver {
             DistributedNotificationCenter.default().removeObserver(obs)
-            lockObserver = nil
+            lockConfirmObserver = nil
         }
     }
 
@@ -653,6 +814,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockDismissInProgress = false
         autoDismissTriggered = false
         dismissHeldUnarmed = false
+        playbackPaused = false
         builtForLayout = nil
         // A rebuild (handleScreenChange tearing down only to immediately call
         // showWindows() again on an actual display-layout change) is not a
@@ -732,6 +894,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let current = Self.screenLayoutSignature()
         guard current != builtForLayout else {
             scLog("screen parameters changed but display layout is unchanged (\(current)) — not rebuilding")
+            return
+        }
+        // A rebuild starts playback from scratch. While the saver is paused
+        // something covers it, most often the lock screen, and nothing may
+        // play behind that. The windows are only waiting to be dismissed, so
+        // leave them as they are.
+        guard !playbackPaused else {
+            scLog("display layout changed to \(current) while playback is paused — not rebuilding")
             return
         }
         scLog("display layout changed: \(builtForLayout ?? "none") → \(current) — recreating screensaver windows")
