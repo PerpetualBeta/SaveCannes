@@ -163,29 +163,28 @@ struct SaveCannesSettingsContent: View {
             }
             .font(.caption)
 
-            HStack(spacing: 8) {
-                Text(L10n.string("settings.stream_label", defaultValue: "Stream:"))
-                TextField("", text: $newURL,
-                          prompt: Text(L10n.string("settings.stream_placeholder",
-                                                   defaultValue: "https://… .m3u8 or .mp4")))
-                    // No `.roundedBorder`: that AppKit bezel is taller and heavier than
-                    // the field style a Form gives its own rows, so it sat proud of the
-                    // label and the button beside it. Four layouts were rendered and
-                    // compared by eye; the Form's own style is the one that lines up.
-                    //
-                    // Claim the width between the label and the button. A Form row
-                    // trailing-aligns its content, so without this the field asks for
-                    // its ideal width — which for an empty field is almost nothing, and
-                    // the wider the window the more of it goes to empty space.
-                    .frame(maxWidth: .infinity)
-                    .onSubmit { addStream() }
-                Button(L10n.string("settings.add_stream", defaultValue: "Add")) { addStream() }
-                    .disabled(VideoSource.forTypedURL(newURL) == nil)
+            captioned(L10n.string("settings.stream_note",
+                                 defaultValue: "A stream is handed straight to the player, so it has to be something it can open: an HLS .m3u8 or a direct MP4, not a web page it would have to scrape. A live stream has no end, so it plays until you dismiss the saver, and a frame grab of one isn't possible.")) {
+                HStack(spacing: 8) {
+                    Text(L10n.string("settings.stream_label", defaultValue: "Stream:"))
+                    TextField("", text: $newURL,
+                              prompt: Text(L10n.string("settings.stream_placeholder",
+                                                       defaultValue: "https://… .m3u8 or .mp4")))
+                        // No `.roundedBorder`: that AppKit bezel is taller and heavier than
+                        // the field style a Form gives its own rows, so it sat proud of the
+                        // label and the button beside it. Four layouts were rendered and
+                        // compared by eye; the Form's own style is the one that lines up.
+                        //
+                        // Claim the width between the label and the button. A Form row
+                        // trailing-aligns its content, so without this the field asks for
+                        // its ideal width — which for an empty field is almost nothing, and
+                        // the wider the window the more of it goes to empty space.
+                        .frame(maxWidth: .infinity)
+                        .onSubmit { addStream() }
+                    Button(L10n.string("settings.add_stream", defaultValue: "Add")) { addStream() }
+                        .disabled(VideoSource.forTypedURL(newURL) == nil)
+                }
             }
-            Text(L10n.string("settings.stream_note",
-                             defaultValue: "A stream is handed straight to the player, so it has to be something it can open: an HLS .m3u8 or a direct MP4, not a web page it would have to scrape. A live stream has no end, so it plays until you dismiss the saver, and a frame grab of one isn't possible."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
 
         Section(L10n.string("settings.playback", defaultValue: "Playback")) {
@@ -225,10 +224,9 @@ struct SaveCannesSettingsContent: View {
                     .disabled(!order.allowsDifferentVideoPerDisplay)
             }
 
-            Divider()
+        }
 
-            Text(L10n.string("settings.per_display", defaultValue: "Per-display playback"))
-                .font(.headline)
+        Section(L10n.string("settings.per_display", defaultValue: "Per-display playback")) {
             Text(L10n.string("settings.per_display_note",
                              defaultValue: "Configure a connected display to give it its own sources and fitting mode. Displays left unconfigured use the settings above."))
                 .font(.caption)
