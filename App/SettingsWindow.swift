@@ -298,15 +298,10 @@ struct SaveCannesSettingsContent: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            HStack {
-                Text(L10n.string("settings.photo_seconds", defaultValue: "Hold each photo for:"))
-                TextField("", value: $photoSeconds, formatter: Self.minutes(min: 2, max: 600))
-                    .frame(width: 60)
-                    .multilineTextAlignment(.trailing)
-                Text(L10n.string("settings.seconds", defaultValue: "seconds"))
-                Spacer()
-            }
-            .disabled(!photosEnabled)
+            durationSetting(label: L10n.string("settings.photo_seconds", defaultValue: "Hold each photo for:"),
+                             value: $photoSeconds, range: 2...600,
+                             unit: L10n.string("settings.seconds", defaultValue: "seconds"))
+                .disabled(!photosEnabled)
         }
 
         Section(L10n.string("settings.titles", defaultValue: "Titles")) {
@@ -318,15 +313,10 @@ struct SaveCannesSettingsContent: View {
                 Text(L10n.string("settings.title_repeatedly", defaultValue: "Repeatedly, while it plays"))
                     .tag(TitleMode.repeatedly)
             }
-            HStack {
-                Text(L10n.string("settings.title_repeat_every", defaultValue: "Repeat every:"))
-                TextField("", value: $titleRepeatMinutes, formatter: Self.minutes(min: 1, max: 60))
-                    .frame(width: 60)
-                    .multilineTextAlignment(.trailing)
-                Text(L10n.string("settings.minutes", defaultValue: "minutes"))
-                Spacer()
-            }
-            .disabled(titleMode != .repeatedly)
+            durationSetting(label: L10n.string("settings.title_repeat_every", defaultValue: "Repeat every:"),
+                             value: $titleRepeatMinutes, range: 1...60,
+                             unit: L10n.string("settings.minutes", defaultValue: "minutes"))
+                .disabled(titleMode != .repeatedly)
             Text(L10n.string("settings.title_note",
                              defaultValue: "The file's own title if it has one, otherwise its filename, low in the corner for a few seconds. A copyright line is shown underneath when the file carries one — a photo's IPTC or TIFF fields count."))
                 .font(.caption)
@@ -347,27 +337,17 @@ struct SaveCannesSettingsContent: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            HStack {
-                Text(L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"))
-                TextField("", value: $idleMinutes, formatter: Self.minutes(min: 1, max: 1440))
-                    .frame(width: 60)
-                    .multilineTextAlignment(.trailing)
-                Text(L10n.string("settings.minutes", defaultValue: "minutes"))
-                Spacer()
-            }
+            durationSetting(label: L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"),
+                             value: $idleMinutes, range: 1...1440,
+                             unit: L10n.string("settings.minutes", defaultValue: "minutes"))
             ShortcutRow(label: L10n.string("settings.play_now", defaultValue: "Play now:"),
                         slot: .activate)
         }
 
         Section(L10n.string("settings.dismiss", defaultValue: "Dismiss")) {
-            HStack {
-                Text(L10n.string("settings.auto_dismiss", defaultValue: "Auto dismiss after:"))
-                TextField("", value: $autoDismissMinutes, formatter: Self.minutes(min: 0, max: 1440))
-                    .frame(width: 60)
-                    .multilineTextAlignment(.trailing)
-                Text(L10n.string("settings.minutes", defaultValue: "minutes"))
-                Spacer()
-            }
+            durationSetting(label: L10n.string("settings.auto_dismiss", defaultValue: "Auto dismiss after:"),
+                             value: $autoDismissMinutes, range: 0...1440,
+                             unit: L10n.string("settings.minutes", defaultValue: "minutes"))
             Text(L10n.string("settings.auto_dismiss_note",
                              defaultValue: "0 = never. Otherwise, a single activation dismisses itself after this long — same as dismissing by hand, locking the screen first if that's turned on below — and won't start itself back up until you touch the Mac. A safeguard against playing for hours or days if nobody's there to dismiss it."))
                 .font(.caption)
@@ -606,6 +586,18 @@ struct SaveCannesSettingsContent: View {
         }
     }
 
+    /// As wide as the largest value this row's own formatter will accept, so
+    /// the field cannot reflow when somebody types its maximum. The width is
+    /// asked of AppKit rather than picked: an NSTextField holding that many
+    /// digits, sized to fit. Deriving it per row also means changing a range
+    /// changes the field, with nothing left to keep in step by hand.
+    private static func fieldWidth(forMaximum maximum: Int) -> CGFloat {
+        let probe = NSTextField(string: String(repeating: "0", count: String(maximum).count))
+        probe.font = .systemFont(ofSize: NSFont.systemFontSize)
+        probe.sizeToFit()
+        return ceil(probe.frame.width)
+    }
+
     private static func minutes(min lo: Int, max hi: Int) -> NumberFormatter {
         let f = NumberFormatter()
         f.numberStyle = .none
@@ -613,6 +605,26 @@ struct SaveCannesSettingsContent: View {
         f.maximum = NSNumber(value: hi)
         f.allowsFloats = false
         return f
+    }
+
+    /// One "Label: [n] unit" row, shared by every numeric setting below so
+    /// they can't drift out of alignment or out of style from each other.
+    ///
+    /// The field goes to the trailing edge, which is where every other
+    /// labelled row in this window puts its control, and it is what keeps
+    /// these four lined up without anything having to know how wide the
+    /// labels are. A fixed label column would line them up too, until the
+    /// first translation: the longest English label here is 124pt and the
+    /// German, French and Russian of the same strings all run past 150.
+    private func durationSetting(label: String, value: Binding<Int>, range: ClosedRange<Int>, unit: String) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField("", value: value, formatter: Self.minutes(min: range.lowerBound, max: range.upperBound))
+                .frame(width: Self.fieldWidth(forMaximum: range.upperBound))
+                .multilineTextAlignment(.trailing)
+            Text(unit)
+        }
     }
 }
 
