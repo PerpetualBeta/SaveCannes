@@ -48,15 +48,15 @@ extension JorvikHotkeyManager {
 /// One slot's persisted shortcut: a key code and a modifier set, in two
 /// UserDefaults ints.
 ///
-/// Emptiness is tested on the modifier set, never on the key code: key code 0
-/// is a real key ("A"), so a zero there means nothing. `JorvikShortcutRecorder`
-/// refuses to record a shortcut without at least one modifier, which makes an
-/// empty modifier set the reliable "no shortcut set" signal.
+/// Unset means both halves are zero, which is what Clear writes. Neither half
+/// is enough on its own: key code 0 is a real key ("A"), and since
+/// `JorvikShortcutRecorder` accepts a bare function key, an empty modifier set
+/// can be a real shortcut too. A bare F5 read as unset would never register.
 struct HotkeyBinding {
     var keyCode: UInt16
     var modifiers: NSEvent.ModifierFlags
 
-    var isUnset: Bool { modifiers.isEmpty }
+    var isUnset: Bool { keyCode == 0 && modifiers.isEmpty }
 
     var displayString: String {
         isUnset ? "" : JorvikShortcutPanel.displayString(keyCode: keyCode, modifiers: modifiers)
