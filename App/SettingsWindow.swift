@@ -334,16 +334,10 @@ struct SaveCannesSettingsContent: View {
                     }
             }
 
-            durationSetting(label: L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"),
-                             value: $idleMinutes, range: 1...1440,
-                             unit: L10n.string("settings.minutes", defaultValue: "minutes"))
-            // Not routed through `captioned` above: that helper always shows
-            // its note, and this one deliberately shows nothing at all when
-            // there's nothing to warn about (see `macScreenLockNote`).
-            if let note = macScreenLockNote {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            captioned(macScreenLockNote, tint: .orange) {
+                durationSetting(label: L10n.string("settings.idle_timeout", defaultValue: "Idle timeout:"),
+                                 value: $idleMinutes, range: 1...1440,
+                                 unit: L10n.string("settings.minutes", defaultValue: "minutes"))
             }
             ShortcutRow(label: L10n.string("settings.play_now", defaultValue: "Play now:"),
                         slot: .activate)
@@ -378,27 +372,15 @@ struct SaveCannesSettingsContent: View {
         )) { _ in
             refreshConnectedDisplays()
         }
-        // macOS's own screen-saver/display-sleep timers live in System
-        // Settings, not in anything this app is told about — no
-        // notification fires when they change. Returning to this app after
-        // visiting System Settings (the common case) refreshes instantly;
-        // the poll below is only a backstop for the rarer case of both
-        // windows being visible side by side at once, so it can afford to
-        // be relaxed — see `JorvikPermissionWatcher`, which uses exactly
-        // this same two-part strategy for a TCC permission row.
+        // macOS's own screen-saver and display-sleep timers live in System
+        // Settings, and nothing tells this app when they change. Someone who
+        // has just changed one comes back to this app to look, and that makes
+        // it active again, so re-read them then. See `JorvikPermissionWatcher`,
+        // which does the same for a TCC permission row.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshMacScreenLockTimers()
         }
-        .onReceive(Timer.publish(every: Self.macScreenLockPollSeconds, on: .main, in: .common).autoconnect()) { _ in
-            refreshMacScreenLockTimers()
-        }
     }
-
-    /// Only a backstop (see the `onReceive` comment above), not the primary
-    /// way this refreshes — generous rather than tight, since going stale
-    /// for a few seconds while both windows happen to be open at once costs
-    /// nothing.
-    private static let macScreenLockPollSeconds: TimeInterval = 10
 
     /// Logged only when the summary actually changes, not on every poll —
     /// matches every other transition-only log line in this app (e.g.
@@ -417,43 +399,39 @@ struct SaveCannesSettingsContent: View {
         }
     }
 
-    /// A warning for the idle-timeout row, shown **only** when there's
-    /// actually something to warn about: macOS's own screen saver, or the
-    /// display-sleep timer on some power source, is set at or below our own
-    /// idle timeout — the single number that matters, per
-    /// `SystemScreenLockSettings.minimumTrigger`. A password/lock delay on
-    /// top of any of that is deliberately not part of this: `AppDelegate`
-    /// tears our own windows down the moment either one fires, so how much
-    /// later the session might additionally lock is moot — we've already
-    /// stopped by then.
+    /// A warning for the idle-timeout row, shown **only** when macOS's own
+    /// screen saver, or the display-off timer that applies to this Mac, is
+    /// set at or below our own idle timeout. See
+    /// `SystemScreenLockSettings.minimumTrigger`. `nil`, so no note at all,
+    /// whenever there is nothing to warn about.
     ///
-    /// `nil` — meaning no note at all, not even a reassuring one — whenever
-    /// there's nothing to warn about: macOS has none of these timers set at
-    /// all (`minimumTrigger` is `nil`), or our own timeout already clears
-    /// whichever of them is soonest.
+    /// One whole sentence per cause, not one sentence with the setting's name
+    /// dropped in: what happens differs (a laptop on battery goes dark, one
+    /// on its adapter does not), and a translation needs the whole sentence.
+    /// Each names the row as System Settings labels it.
     private var macScreenLockNote: String? {
         guard let macMinimumTriggerSeconds, let macMinimumTriggerCause,
               Double(idleMinutes) * 60 >= macMinimumTriggerSeconds
         else { return nil }
-        let triggerMinutes = Int((macMinimumTriggerSeconds / 60).rounded())
-        // Named exactly as System Settings itself labels the row, in
-        // quotes, so there's no doubt this is about a *macOS* setting and
-        // no ambiguity about which one to go change. The right one depends
-        // on which mechanism is actually binding — distinct L10n keys per
-        // cause, not one key reused with three different defaultValues, so
-        // a future translation can tell them apart too.
-        let settingName: String
+        let minutes = Int((macMinimumTriggerSeconds / 60).rounded())
         switch macMinimumTriggerCause {
         case .screensaver:
-            settingName = L10n.string("settings.mac_setting_screensaver", defaultValue: "Start Screen Saver when inactive")
+            return L10n.format("settings.idle_timeout_warn_screensaver",
+                               defaultValue: "“Start Screen Saver when inactive” is set to %d min in System Settings, so macOS’s own screen saver starts first and Save Cannes never does.",
+                               minutes)
+        case .displaySleep:
+            return L10n.format("settings.idle_timeout_warn_display",
+                               defaultValue: "“Turn display off when inactive” is set to %d min in System Settings, so the display goes dark before Save Cannes can start.",
+                               minutes)
         case .displaySleepBattery:
-            settingName = L10n.string("settings.mac_setting_display_sleep_battery", defaultValue: "Turn display off on battery when inactive")
+            return L10n.format("settings.idle_timeout_warn_battery",
+                               defaultValue: "“Turn display off on battery when inactive” is set to %d min in System Settings. On battery, the display goes dark before Save Cannes can start.",
+                               minutes)
         case .displaySleepACPower:
-            settingName = L10n.string("settings.mac_setting_display_sleep_power", defaultValue: "Turn display off on power adapter when inactive")
+            return L10n.format("settings.idle_timeout_warn_power",
+                               defaultValue: "“Turn display off on power adapter when inactive” is set to %d min in System Settings. On the power adapter, the display goes dark before Save Cannes can start.",
+                               minutes)
         }
-        return L10n.format("settings.idle_timeout_warn_covered",
-                            defaultValue: "Warning: your Mac's '%@' setting is %d min, before this idle timeout — Save Cannes may never get a turn.",
-                            settingName, triggerMinutes)
     }
 
     // MARK: - Multi-display
@@ -702,13 +680,18 @@ struct SaveCannesSettingsContent: View {
     /// control and its own caption, which reads as though the note belongs to
     /// whatever comes next rather than to the thing above it. One row, one
     /// divider, and the note travels with the control it describes.
-    private func captioned<Content: View>(_ note: String,
+    /// A row with its note underneath. A `nil` note draws the row alone, for
+    /// a note that only appears when there is something to say. `tint`
+    /// replaces the usual secondary colour, for a note that is a warning.
+    private func captioned<Content: View>(_ note: String?, tint: Color? = nil,
                                           @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             content()
-            Text(note)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+            }
         }
     }
 

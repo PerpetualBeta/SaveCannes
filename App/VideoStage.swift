@@ -191,11 +191,20 @@ final class VideoStage: NSView {
         playNext()
     }
 
-    /// Halt playback but leave the window mounted, for while the system lock
-    /// screen covers us. There is no paired resume — the windows are torn
-    /// down on unlock.
+    /// Halt playback but leave the window mounted, for while something covers
+    /// us: the lock screen, macOS's own screen saver, or a sleeping display.
+    /// There is no paired resume. A paused stage is only ever torn down.
     func pause() {
+        // Not running any more, as far as the async loaders are concerned. A
+        // film or photograph still loading when the lock came down checks this
+        // before it goes on screen, and would otherwise start playing behind
+        // the lock screen a moment after this pause.
+        running = false
         player.pause()
+        // The desk and the empty-source logo each draw on a display link, a
+        // frame at a time, for as long as the link runs.
+        stopDeskLink()
+        stopNoticeDrift()
         // A photo's clock has to stop too, or the lock screen spends its time
         // silently walking the playlist and we come back somewhere else.
         stopStillTimer()

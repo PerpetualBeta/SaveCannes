@@ -232,54 +232,13 @@ The text is the video's **own embedded title** when the file carries one, and it
 
 Captions are drawn with a soft shadow, because a video screensaver can't know what it's drawing over and white-on-white is otherwise a real possibility on the wrong shot.
 
-### Idle timeout vs. macOS's own screen saver and display sleep
+### Idle timeout vs. macOS's own timers
 
-Settings → Activation's idle timeout is Save Cannes' own clock, entirely separate from
-two things System Settings → Lock Screen runs on its own idle clock, whether or not Save
-Cannes is installed: **"Start Screen Saver after"**, and **"Turn display off on
-battery/power adapter when inactive"** — each power source keeping its own timer.
+Save Cannes waits for its own idle timeout. macOS keeps two idle clocks of its own in System Settings: **Start Screen Saver when inactive**, and **Turn display off when inactive** (on a laptop, one for battery and one for the power adapter). Whichever of those fires first wins. If it fires before Save Cannes' idle timeout, the screen is already showing macOS's screen saver or has gone dark, and Save Cannes does not start into either.
 
-The display-off timer is easy to overlook and is very often the one that actually
-matters. Screen saver defaults tend to be generous (30–60 minutes); on a laptop running
-on battery, "Turn display off" is routinely set to a couple of minutes — so the display
-frequently goes dark well before the screen saver's own timer would ever fire, and it's
-*that* timer, not the screen saver's, deciding when the screen first stops showing
-anything. (Whether the session goes on to actually *lock* some further delay after
-either of those isn't part of this — Save Cannes has already stopped by then either
-way, so it doesn't change anything.)
+The display-off timer is the one people miss. On battery, a laptop often turns its display off after two minutes, which is sooner than Save Cannes' default of five. When a macOS timer is at or under the idle timeout, Settings says so in orange under the idle timeout and names the System Settings row to change. Set **Start Screen Saver when inactive** to **Never** (Save Cannes is your screen saver now), or give the display-off timer more time than the idle timeout.
 
-**Save Cannes' idle timeout has to be shorter than the soonest of the screen saver's
-timer and display sleep on *either* power source, or it may never activate at all.**
-Once one of those fires, the screen either shows macOS's own screen saver or simply goes
-dark, and Save Cannes refuses to start into either — decoding video nobody would see
-achieves nothing. If the idle timeout is set at or past whichever of those macOS is
-set to do soonest, that always wins the race, and Save Cannes never gets a turn.
-Settings shows a warning under the idle timeout field the moment this happens, naming
-whichever of the three is actually binding (the screen saver, or display sleep on
-battery or on power — a Mac with no battery just has the one) — checked against all of
-them regardless of which power source is plugged in right now, since that can change at
-any moment — so it isn't something to only discover by watching the log. Any of the
-three can individually be set to **Never**, in which case it simply drops out of the
-comparison; if all of them are, or none can be read, there's nothing to warn about and
-nothing is shown at all — not even a reassuring note when you're already safely under
-it, since there's nothing worth saying.
-
-The straightforward fix, once you know which one is binding: set macOS's own **"Start
-Screen Saver"** to **Never** if it's the screen saver — Save Cannes is the screen saver
-now — or otherwise raise **"Turn display off"** on whichever power source is the culprit
-(or accept that on battery, a very short display-off timer may simply leave little room
-for Save Cannes to ever get a turn) — and keep the idle timeout comfortably below
-whatever's left.
-
-Save Cannes also watches for all of this *while it's already running*, not just before
-it starts. If the login session locks — by Save Cannes' own request, by **Lock Now**, a
-closed lid, or a hot corner, it makes no difference — playback pauses in place rather
-than keep decoding behind a screen nobody can see, and the activation ends on unlock,
-same as any other dismiss. And if macOS's own screen saver starts up on its own, or the
-display itself goes to sleep — underneath or over ours, since the screen saver sits at
-the same window level as ours — Save Cannes gets out of the way instead of contesting
-it, and the ordinary idle countdown brings its own saver back once macOS's screen saver
-ends or the display wakes.
+While Save Cannes is playing, it stops when something covers it: the lock screen (whether Save Cannes locked it, or you chose Lock Now, closed the lid or used a hot corner), macOS's own screen saver, or the display going to sleep. The picture and the sound stop, and nothing plays behind the lock screen. When you come back, Save Cannes is dismissed as usual, and if **Lock screen when dismissed** is on, the Mac locks first.
 
 ### If a video wedges
 
@@ -366,10 +325,7 @@ Other targets:
 
 **It skips a file I know plays in QuickTime.** Then it isn't skipping it for the reason you think. Turn logging on (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES`), let the saver run, and read `~/Library/Logs/Save Cannes/savecannes.log` — every skip is logged with the reason AVFoundation gave.
 
-**It never comes on, even after sitting idle for ages.** Check Settings → Activation —
-if the idle timeout warning shows underneath it in orange, macOS's own screen saver or
-display sleep is kicking in first every time, so Save Cannes never gets a turn. See
-**Idle timeout vs. macOS's own screen saver and display sleep** above.
+**It never comes on, even after sitting idle for ages.** Look under the idle timeout in Settings → Activation. An orange note there means one of macOS's own timers fires first every time. See [Idle timeout vs. macOS's own timers](#idle-timeout-vs-macoss-own-timers).
 
 **The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
 

@@ -23,27 +23,20 @@ import IOKit.ps
 /// is `nil` and Settings shows nothing, because there is genuinely nothing
 /// for Save Cannes' own idle timeout to lose a race against.
 ///
-/// Power-source profiles are read generically — every top-level key in the
-/// `com.apple.PowerManagement` domain that has its own "Display Sleep
-/// Timer" — rather than assuming which ones exist. A laptop has both "AC
-/// Power" and "Battery Power" (`kIOPMACPowerKey`/`kIOPMBatteryPowerKey`,
-/// the same public IOKit constants `IOPSGetProvidingPowerSourceType`
-/// itself returns); a Mac with no battery — a Mac mini, Studio, or desktop
-/// iMac — very plausibly has only the one, and rather than guess whether
-/// or how that profile might be named differently there, this just reads
-/// whatever profiles are actually present.
+/// Two power-source profiles are read, "AC Power" and "Battery Power"
+/// (`kIOPMACPowerKey`/`kIOPMBatteryPowerKey`), and the battery one only when
+/// the Mac has an internal battery. A Mac mini or Studio can still carry a
+/// "Battery Power" entry, and its timer never applies there. Any other
+/// profile, such as "UPS Power", is ignored: it only applies during a power
+/// cut, and a warning about that would be noise.
 ///
-/// ## Why a lock delay is deliberately not part of this
+/// ## Why a lock delay is not part of this
 ///
-/// `AppDelegate` tears its own windows down (`observeMacScreenState()`)
-/// the moment macOS's own screen saver starts **or** the display sleeps,
-/// whichever happens first — not only once the session actually locks. So
-/// the number Save Cannes' idle timeout has to beat is the soonest of
-/// *those*, full stop. Whether, or how much later, a password-required
-/// lock might additionally follow doesn't change anything — Save Cannes
-/// has already stopped by then regardless — so it isn't part of the
-/// comparison. (An earlier version of this DID fold in a lock delay; that
-/// was a mistake, corrected 2026-09-24.)
+/// `AppDelegate` pauses its own playback (`observeMacScreenState()`) the
+/// moment macOS's own screen saver starts **or** the display sleeps,
+/// whichever happens first. So the number Save Cannes' idle timeout has to
+/// beat is the soonest of *those*. A lock that follows later changes
+/// nothing, because Save Cannes has already stopped playing by then.
 enum SystemScreenLockSettings {
 
     private static let screensaverDomain = "com.apple.screensaver"
@@ -60,23 +53,38 @@ enum SystemScreenLockSettings {
         return TimeInterval(seconds)
     }
 
-    /// Every power-source profile macOS has (see the type doc above for why
-    /// this is read generically), with its display-sleep timer if one is
-    /// actually set — `nil` there means "Never" for that one profile, not
-    /// that the profile doesn't exist.
+    /// The display-sleep timer of each profile that applies to this Mac
+    /// (see the type doc above), `nil` where that profile is set to "Never".
     static var displaySleepProfiles: [(cause: Cause, seconds: TimeInterval?)] {
         guard let profiles = CFPreferencesCopyMultiple(
             nil, powerManagementDomain as CFString, kCFPreferencesAnyUser, kCFPreferencesCurrentHost
         ) as? [String: Any] else { return [] }
-        return profiles.compactMap { key, value -> (Cause, TimeInterval?)? in
-            // Only a real power-source profile has this key at all —
-            // "SystemPowerSettings", the domain's other top-level entry,
-            // doesn't, so this is what tells the two apart.
-            guard let settings = value as? [String: Any],
+        func timer(_ key: String) -> TimeInterval?? {
+            guard let settings = profiles[key] as? [String: Any],
                   let minutes = (settings["Display Sleep Timer"] as? NSNumber)?.intValue
             else { return nil }
-            let cause: Cause = key == kIOPMBatteryPowerKey ? .displaySleepBattery : .displaySleepACPower
-            return (cause, minutes > 0 ? TimeInterval(minutes * 60) : nil)
+            return .some(minutes > 0 ? TimeInterval(minutes * 60) : nil)
+        }
+        let battery = hasInternalBattery
+        var result: [(cause: Cause, seconds: TimeInterval?)] = []
+        if let ac = timer(kIOPMACPowerKey) {
+            result.append((battery ? .displaySleepACPower : .displaySleep, ac))
+        }
+        if battery, let onBattery = timer(kIOPMBatteryPowerKey) {
+            result.append((.displaySleepBattery, onBattery))
+        }
+        return result
+    }
+
+    /// Whether the Mac has a battery of its own. A UPS also reports as a
+    /// power source, but with a different type, so it does not count.
+    private static var hasInternalBattery: Bool {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
+        else { return false }
+        return list.contains { source in
+            let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any]
+            return description?[kIOPSTypeKey] as? String == kIOPSInternalBatteryType
         }
     }
 
@@ -100,6 +108,8 @@ enum SystemScreenLockSettings {
 
     enum Cause {
         case screensaver
+        /// A Mac with no battery has one display-off timer, not two.
+        case displaySleep
         case displaySleepBattery
         case displaySleepACPower
 
@@ -108,6 +118,7 @@ enum SystemScreenLockSettings {
         var logLabel: String {
             switch self {
             case .screensaver: return "screen saver"
+            case .displaySleep: return "display sleep"
             case .displaySleepBattery: return "display sleep (battery)"
             case .displaySleepACPower: return "display sleep (AC power)"
             }
