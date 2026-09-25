@@ -4,6 +4,18 @@ Plays your own videos and photos as a macOS screensaver. Point it at films, fold
 
 A tribute to [Save Hollywood](http://s.sudre.free.fr/Software/SaveHollywood/about.html) by WhiteBox — the much-loved saver that did exactly this, until macOS broke it. Same idea, rebuilt from scratch on the modern Jorvik screensaver pattern.
 
+## Features
+
+- **Films, folders and streams**, as many as you like, mixed freely. Folders are walked recursively, and each source can be switched off without being removed. See [Sources](#sources).
+- **Photos become a desk of prints**, not a slideshow: each one is thrown down onto the pile, and the picture inside the newest print won't keep still. See [The photo desk](#the-photo-desk).
+- **Every display at once**, each with its own film or all showing the same one, and each display can have its own sources and fitting. See [Multiple displays](#multiple-displays).
+- **Play on one display** while you keep working on the rest: a spare monitor becomes a piece of art until you click it. See [Play on one display](#play-on-one-display).
+- **Titles** tell you what's playing, from the file's own metadata or its name. See [Titles](#titles).
+- **Stays out of the way.** It won't start during a video call or behind the lock screen, it can be suspended from the menu bar, and Settings warns you when one of macOS's own timers would beat it. See [Using Save Cannes](#using-save-cannes).
+- **Stops when something covers it**, so nothing plays or sounds behind a locked screen, and it can lock the Mac when you dismiss it. See [When something covers it](#when-something-covers-it).
+- **Bad files are skipped** and a video that wedges is moved on from, so you never come back to a frozen frame.
+- **Screenshots** of the frame on screen, at the video's own resolution. See [Screenshots](#screenshots).
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later
@@ -26,61 +38,87 @@ Either way, the first launch happens immediately. Save Cannes registers itself f
 
 After first launch you'll see a small **film-strip** icon in your menu bar. That's your only touchpoint with the app — everything else lives in its menu and its **Settings…** window. Open Settings and add a source — a folder, a file or a stream — before anything will play.
 
-To uninstall: `pkill -f "Save Cannes"` then drag `Save Cannes.app` to the Trash.
+### Uninstalling
 
-## Why an app, not a `.saver`
+Quit Save Cannes from its menu bar icon, then drag `Save Cannes.app` to the Trash. If you installed it with Homebrew, run this instead:
 
-Save Cannes is a screensaver-style product, but it ships as a regular `.app` rather than as a `.saver` bundle.
+```sh
+brew uninstall --cask perpetualbeta/jorvik/savecannes
+```
 
-The deciding reason is file access. A `.saver` runs inside Apple's `legacyScreenSaver` host process, which owns the permission identity — a hosted saver can never hold a file-access grant of its own, so it could never reliably read the video folder you chose. There's a longer list of reasons besides (process suspension, multi-instance preview lifecycle, removed SPIs) that the rest of the Jorvik saver family ran into first.
+## Using Save Cannes
 
-Save Hollywood hit this wall first, and its author's own account is worth reading, because it's the same wall: *"In macOS Catalina, Apple completely broke the standard open panel APIs when invoked from a screen saver."* Choosing a file **is** the entire interface for a saver like this, and from inside the host process there was no longer a supported way to offer it — the note goes on to say that working around it would need APIs Apple keeps private for its own screensavers. Save Cannes puts the picker, and the file access it grants, in an ordinary app where both still work.
-
-As a regular app it gets out of its own way: it asks for your folder, plays from it, and gives full control over the configurator, hotkeys, and lock-screen integration a saver bundle can't reach.
-
-## What it does
+### Starting and stopping
 
 When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss. If you started it yourself, from the menu or a shortcut, it waits for the pointer to stop before it treats movement as a dismiss, so carrying on to move your hand away doesn't close what you just opened.
 
-It won't start while something else is deliberately keeping the display awake. A video call, a film, a presentation: all of them hold a power assertion that macOS honours, and Save Cannes now honours it too. Sitting still through a call looks exactly like an empty desk if you only measure the keyboard. When the call ends, the idle countdown starts again from zero rather than firing the moment it finishes.
+**Play Now**, from the menu bar icon or its keyboard shortcut (set in [Activation](#activation)), starts it immediately.
 
-You can also stop it activating yourself, for as long as you like: click the menu bar icon and choose **Suspend**. The icon changes to show it's off, so it can't quietly stay that way for days without you noticing, and the setting survives a relaunch. **Play Now** — from the menu, or its keyboard shortcut — still triggers the saver immediately regardless; suspending only ever affects the automatic, idle-triggered activation.
+Left alone, every video plays from beginning to end; the only things that cut one short are your own input, waking or unlocking the Mac, and a display being added, removed or reconfigured (which rebuilds the windows and restarts playback).
 
-- **Any number of sources**, mixed freely: folders, single files, and streams, each with an include-in-playback switch so a source can be set aside without being forgotten.
-- **A folder** plays through everything in it, including subfolders — so a library organised one-folder-per-film needs no flattening. When the last video finishes, it starts again.
-- **A stream** plays whatever your player can open over the network: an HLS `.m3u8` or a direct MP4.
-- **Photos play too**, alongside the videos in the same folder — JPEG, PNG, HEIC, TIFF, camera RAW, anything macOS knows as an image. A folder of them isn't a slideshow: each arrives as a paper print thrown onto a desk, landing on the pile the last one left — and where a print is supposed to be still, the picture inside it drifts in and out of focus, carries a shake that isn't there, and comes apart into static and blocks. See **Photos** below.
-- **Bad files are skipped**, silently and immediately. Anything that isn't a video is filtered out by file type before playback; anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the folder can be played, the saver says so on screen rather than sitting there black.
-- **Nothing gets stuck.** Every video otherwise plays start to finish, and if one ever wedges — plays, then stops advancing without ever reporting that it finished — a watchdog moves on rather than leaving a frozen frame up all night. See **If a video wedges** below.
-- **Multiple displays** each get their own window and their own playback. In sequential order they all play the same video, in step; in random order each gets its own film by default, or you can have them match.
+To stop a single activation running unattended for hours, or to lock the Mac when the saver goes, see [Dismiss](#dismiss).
 
-## Configuration
+### During a call
 
-Click the menu bar icon → **Settings…** for:
+It won't start while something else is deliberately keeping the display awake. A video call, a film, a presentation: all of them hold a power assertion that macOS honours, and Save Cannes honours it too. Sitting still through a call looks exactly like an empty desk if you only measure the keyboard. When the call ends, the idle countdown starts again from zero rather than firing the moment it finishes.
 
-- **Sources** — the folders, files and streams to play, each with an include-in-playback switch, a count of what was found, and a button to open it in Finder
-- **Playback** — order, and sound
-- **Display** — how each video is fitted to the screen, and whether every display shows the same one
-- **Per-display playback** — optional source and fitting choices for each physical display
-- **Photos** — whether photos play, and how long each is held
-- **Titles** — whether the title of what's playing appears on screen, and how often
-- **Activation** — idle timeout in minutes, a global "Play now" hotkey (a shortcut can be cleared as well as changed), and a "Suspended" toggle that mirrors the menu bar's Suspend/Resume item
-- **Dismiss** — an "Auto dismiss after" timeout in minutes (0 = never) so a single activation can't run unattended for hours or days, and a toggle to lock the screen automatically when the saver dismisses
-- **Capture** — global hotkey to save the current frame to `~/Pictures/Save Cannes/`
-- **Show icon in menu bar** — hide the film-strip status icon while Save Cannes keeps running (playback is unaffected). Your choice persists across launches, including login auto-start. *Shown only on macOS 14–15 — on macOS 26 (Tahoe) and later, use System Settings → Menu Bar, which provides this natively.*
-- **General** — Launch at Login
+### Suspending it
 
-All settings persist immediately, no Save/OK button. Changes apply the next time the saver comes up, which is always — using Settings dismisses it.
+You can also stop it activating yourself, for as long as you like: click the menu bar icon and choose **Suspend**. The icon changes to show it's off, so it can't quietly stay that way for days without you noticing, and the setting survives a relaunch. **Play Now** still triggers the saver immediately regardless; suspending only ever affects the automatic, idle-triggered activation. Choose **Resume** to turn it back on.
+
+### Play on one display
+
+With more than one display connected, the menu bar icon's menu also lists a **Play on \<display name\>** row for each one, between Play Now and Suspend/Resume, ordered by name. Choosing one turns just that display into a piece of art — a folder of photos, a film, a stream — while every other display and app carries on exactly as it was. It does not take keyboard focus, does not hide the cursor anywhere but over its own pixels, and does not respond to the idle timeout at all: it runs until you end it yourself, either from the same menu (now reading **Stop \<display name\>**) or with a single click anywhere on that display. Moving the pointer across it, typing, or clicking somewhere else has no effect.
+
+If "Displays have separate Spaces" is off in System Settings → Desktop & Dock, your main display has no row. It then holds the only menu bar and the Dock, and a single-screen window would cover both for every app until you clicked it away. With that setting on, every display has its own menu bar, and any of them can play.
+
+Ending it never locks the screen, regardless of the "Lock screen when dismissed" setting in Dismiss — that toggle means stepping away from the whole Mac, which isn't what clicking a spare monitor playing something ornamental means.
+
+Anything that covers a single-screen window ends it, and nothing brings it back: start it again from the menu. The ordinary, all-displays saver — by idle, by Play Now, or by its own hotkey — stops every single-screen window first rather than leaving two independent players fighting over the same display.
+
+Whether a single-screen window carries sound is part of the [Sound](#sound) setting.
+
+### When something covers it
+
+While Save Cannes is playing, it stops when something covers it: the lock screen (whether Save Cannes locked it, or you chose Lock Now, closed the lid or used a hot corner), macOS's own screen saver, or the display going to sleep. The picture and the sound stop, and nothing plays behind the lock screen. When you come back, Save Cannes is dismissed as usual, and if **Lock screen when dismissed** is on, the Mac locks first. A single-screen window is ended instead, and never locks the Mac.
+
+### Screenshots
+
+Set a hotkey under Settings → Capture and press it while the saver is playing. The frame is written to `~/Pictures/Save Cannes/` as a PNG.
+
+The frame is pulled from the video file rather than grabbed off the screen, so you get the whole frame at the video's own resolution — a screenshot taken in "full screen" mode isn't cropped to the shape of whichever display it happened to be playing on.
+
+That also means a **live stream can't be captured**: there's no file to seek into. On-demand streams are fine.
+
+A **photo** is re-read from its own file at full size, so what lands in `~/Pictures/Save Cannes/` is the whole photograph rather than the display-sized, cropped, part-way-through-a-zoom version that was on screen.
+
+## Settings
+
+Click the menu bar icon → **Settings…**. The sections below are in the same order as the window. All settings persist immediately, no Save/OK button. Changes apply the next time the saver comes up, which is always — using Settings dismisses it.
+
+### Menu Bar
+
+**Show icon in menu bar** hides the film-strip status icon while Save Cannes keeps running (playback is unaffected). Your choice persists across launches, including login auto-start. Re-open Save Cannes from your Applications folder to bring the icon back. *Shown only on macOS 14–15 — on macOS 26 (Tahoe) and later, use System Settings → Menu Bar, which provides this natively.*
 
 ### Sources
 
 Add as many as you like, of three kinds:
 
-- **Folders** are walked recursively, so subfolders are included and a library organised one-folder-per-film needs no flattening. Hidden files are skipped, and bundles (a `.photoslibrary`, an `.app`) aren't opened up.
+- **Folders** are walked recursively, so subfolders are included and a library organised one-folder-per-film needs no flattening. Hidden files are skipped, and bundles (a `.photoslibrary`, an `.app`) aren't opened up. When the last video finishes, it starts again.
 - **Files** are single videos or photos, played on loop when they're the only source.
 - **Streams** are URLs handed straight to the player. That means they have to be something it can open by itself — an **HLS `.m3u8`** or a **direct MP4** — not a web page it would have to scrape, which rules out YouTube and the like by design rather than by omission. Only `http` and `https` are accepted, because those are the schemes that actually play; offering others would mean offering something that silently never works.
 
+Each source has a switch. Turning one off leaves it in the list, which is the point: the alternative is deleting a source to stop playing it and then having to find it again. A source that's off is dimmed and its videos are excluded from the playlist, though its count still shows so you know what you're switching back on.
+
+The chevrons at the left of each row move a source up or down. That matters in sequential order, which plays the sources in the order they're listed — so this is how you say "this folder first" without removing and re-adding everything after it.
+
 Each source on disk has a **magnifying-glass button** that shows it in Finder — a folder opens so you can see what's in it, a single file is revealed in its enclosing folder. Worth a click before you walk away, to be sure the saver is pointed where you think it is.
+
+Removing a source is the minus button beside it. Nothing is ever moved or altered on disk — Save Cannes only ever reads.
+
+Anything that isn't a video or a photo is filtered out by file type before playback. Anything that *is* a video but can't actually be decoded — a truncated download, an unsupported codec, an audio-only file in a movie container — is skipped as it comes up, and the next one starts. If nothing in the sources can be played, the saver says so on screen rather than sitting there black.
+
+If a folder lives in Desktop, Documents, Downloads or on an external drive, macOS asks permission the first time. See [Privacy](#privacy).
 
 #### Streams known to work
 
@@ -98,113 +136,43 @@ NASA+'s address is generated infrastructure and should be expected to rotate. Wh
 curl -s https://plus.nasa.gov/wp-json/nasaplus/v1/live-streams | python3 -m json.tool
 ```
 
-That's an open REST route on a public-domain government service — no key, no token, no signature — which is the distinction that makes it fair game where a URL prised out of a player's innards would not be. The same call sometimes lists extra channels (an eclipse feed, for instance) that turn out to be recordings rather than live.
-
-NASA's older addresses are gone: the ISS **HDEV** experiment ended in 2020, and the `ntv1`/`ntv2` NASA TV endpoints now return 403.
+The same call sometimes lists extra channels (an eclipse feed, for instance) that turn out to be recordings rather than live.
 
 > **A live stream never hands over.** It has no end, so once a display lands on one it stays there until you dismiss the saver — the playlist can't advance past something that never finishes. That's inherent rather than a fault, but it does mean a live stream mixed into a folder of films will eventually take that display for the rest of the session, unless "Auto dismiss after" is set, which ends the activation on a clock whatever is playing.
 
-Each source has a switch. Turning one off leaves it in the list, which is the point: the alternative is deleting a source to stop playing it and then having to find it again. A source that's off is dimmed and its videos are excluded from the playlist, though its count still shows so you know what you're switching back on.
+### Playback
 
-The chevrons at the left of each row move a source up or down. That matters in sequential order, which plays the sources in the order they're listed — so this is how you say "this folder first" without removing and re-adding everything after it. (Up and down buttons rather than dragging: a settings form can't host a drag-reorderable list without nesting a second scroll view inside a window that already scrolls, and buttons work from the keyboard.)
+**Order:**
 
-Removing a source is the minus button beside it. Nothing is ever moved or altered on disk — Save Cannes only ever reads.
+- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice. A directory of photographs is shuffled as one unit and kept together — see [Every photo in a folder, before the next film](#every-photo-in-a-folder-before-the-next-film).
+- **Sequential** — each source in turn, in the order they're listed, and each source's files in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see [Multiple displays](#multiple-displays).
 
-> **A note on protected folders.** If a folder lives in Desktop, Documents or Downloads, macOS asks permission the first time. Save Cannes triggers that prompt as you add it, while you're looking at Settings, rather than later from behind a fullscreen saver where you couldn't see it.
+#### Sound
 
-### Photos
+Off by default — a screensaver that starts talking to an empty room is nobody's friend. "Play sound" has three choices:
 
-Photos in a source folder join the playlist alongside the videos, and each is held for a few seconds before the next lands. A folder of them is shown as a desk with the prints piling up on it — see below.
+- **Never** — silent, always.
+- **All displays** — sound on the main display only, while the ordinary, synced saver plays (by idle, Play Now, or its hotkey). Every display runs its own playback, so sound on more than one would mean the same soundtrack two or three times over, a few frames apart.
+- **All displays and one single screen** — everything the option above does, plus sound on the *first* [single-screen window](#play-on-one-display) you start, whichever display that turns out to be. Starting a second one while the first still has sound leaves the second silent, for the same overlap reason.
 
-- **Any image type macOS recognises** counts — JPEG, PNG, HEIC, TIFF, camera RAW. Rather than a list of extensions, the file's actual type is asked of the system, so a format added to macOS in future works without a change here. PDFs and SVGs aren't images by that test, and aren't played.
-- **Orientation is honoured.** A phone photo with an EXIF rotation tag is shown upright rather than on its side.
-- **The photo's own title** is used for the on-screen caption when its IPTC or TIFF fields carry one, and its copyright line likewise. Otherwise the filename, exactly as for a video.
-- **Turn photos off** if your film folders have cover art or downloaded posters in them that you'd rather not see as slides. A file you picked by hand is always played whichever kind it is — you chose that exact file.
+### Display
 
-#### A desk, not a slideshow
-
-A folder of photographs isn't shown as a slideshow. Each one arrives as a **paper print
-with a white border, thrown down onto a desk**, landing on top of whatever is already
-lying there — so what builds up over a few minutes is a pile, and the collection is the
-thing you're watching rather than any single picture in it.
-
-And then the trick. **The paper is dead still, and the picture inside it is not.** A print
-that has landed never moves again — but the image in its window drifts in and out of
-focus, carries the shake of a hand that isn't there, and every so often comes apart into
-blocks, or static, or a mess of compression, and puts itself back together. Prints are not
-supposed to do that, which is the point.
-
-- **Only the newest print is alive.** As each new one comes down, the one it buries stops
-  moving and loses its colour, so the pile beneath is monochrome and the picture on top is
-  the only thing in the frame doing anything.
-- **Focus hunts rather than drifts** — it holds a distance, then racks quickly to another,
-  the way a lens does when it can't make up its mind. Where the photo *has* a subject, the
-  subject is held sharp and only the world behind it goes soft; where it hasn't, the whole
-  picture drifts together.
-- **The shake is a knock, not a sway.** Nothing happens for a second or two, then the
-  frame is jolted and settles. It shakes inside the paper's window: the print does not
-  move with it.
-- **Reduce Motion** in System Settings → Accessibility is honoured. Prints still land and
-  still pile up, because the collection is the point — but nothing shakes, hunts focus or
-  comes apart, and they arrive without the fall.
-
-None of this is configurable, deliberately. It's what a folder of images does here.
-
-**How the subject is found.** macOS's Vision framework will hand over a subject mask for
-very nearly any photograph, so its word alone isn't worth much. Instead the answer is
-built from things that don't depend on each other: whether the masked region really is
-nearer than the rest of the picture, whether its outline sits on a *step* in the depth
-rather than running through flat ground, whether the place a person would look falls
-inside it, and whether it's one compact thing rather than several scraps of scenery. All
-four have to agree. Measured across fourteen photographs, that accepted every one with a
-subject and rejected every one without — the single case it turns down that does contain a
-person is a figure occupying 0.4% of the frame, where holding it sharp would make no
-visible difference anyway.
-
-Depth comes from **Depth Anything V2 Small**, a Core ML model from Apple's own model
-library, used under the Apache 2.0 licence and shipped inside the app (about 18MB of it).
-Nothing is uploaded and nothing is asked of the network — the model runs on your Mac, on
-your photographs, and Save Cannes has no network access for anything but its own update
-check. On a Mac where the model can't be loaded, photographs still pile up on the desk and
-still shake and glitch; they just don't drift in and out of focus.
-
-#### Every photo in a folder, before the next film
-
-A folder of photographs is a **collection**, and it only reads as one if the whole folder
-goes past before something else starts. So the images in a directory are kept together as a
-run: once the first of them comes up, the rest follow, and only then does the next film
-play.
-
-In **random** order the runs are shuffled and the images *within* each run are shuffled
-too — which gives full coverage without repeats, because a shuffle is a selection without
-replacement. Every image in the folder is shown exactly once before any of them comes
-round again. In **sequential** order it's the same grouping in path order.
-
-Grouped by the directory each image actually sits in, rather than by the source you added,
-because a source pointed at a photo library is usually a tree of albums — and it's the
-album that's the collection.
-
-### Playback order
-
-- **Random** — shuffled across everything from every switched-on source, and reshuffled each time it works through them, so you don't get the same running order twice. A directory of photographs is shuffled as one unit and kept together — see **Every photo in a folder, before the next film** above.
-- **Sequential** — each source in turn, in the order they're listed, and each source's files in path order. So a folder's contents stay together rather than being interleaved with another library by filename, which is nobody's intent when they added two folders separately. Every display plays the same video, in step — see **Multiple displays** below.
-
-### Size on screen
+**Size on screen:**
 
 - **Full screen, cropped to fit** — fills the display; whatever overflows the long edge is cropped away. The default, and what you want for most footage.
 - **Fit to screen, no cropping** — the whole frame is visible, letterboxed or pillarboxed on black.
 - **Original size** — one video pixel to one screen pixel, centred on black. Anything larger than the display is scaled down to fit, since at a literal 1:1 it would spill off every edge and show you an arbitrary crop of the middle.
 
-### Multiple displays
+#### Multiple displays
 
 Every display gets its own fullscreen window and its own playback. What they show follows from the playback order:
 
 - **Sequential order always plays the same video on every display**, in step. Playing a folder in order means the same order everywhere — starting each display at a different file would make the ordering meaningless. There's nothing to decide, so the **Different video on each display** toggle is switched off and greyed out.
 - **Random order lets you choose.** Leave **Different video on each display** on (the default) and each display gets its own shuffle — a three-monitor desk plays three different films at once. Turn it off and every display plays the same video from one shared shuffle, all started together.
 
-Your choice is remembered while the control is locked: switch to sequential order and back to random, and the toggle is where you left it.
+To play on just one display while you use the others, see [Play on one display](#play-on-one-display).
 
-#### Per-display playback
+### Per-display playback
 
 The **Per-display playback** section configures each currently connected physical display independently. Choose **Configure…** beside a display, then select the sources it may play and its size-on-screen mode. This is the useful setup when, for example, an ultrawide display has a library of 21:9 films and a MacBook display has a separate library of 16:10 footage.
 
@@ -212,25 +180,14 @@ Displays you leave unconfigured keep the global source and size settings. A conf
 
 A configured display plays exactly the sources you ticked for it, whether or not those sources are switched on in **Sources**. The include-in-playback switches there set what an *unconfigured* display plays; a display you have configured has already been told what it plays, and the per-display choice wins. Two consequences worth knowing: choosing **Configure…** starts that display with every source ticked, including any you had switched off globally, so untick what you do not want; and a display with no sources ticked plays nothing, showing a faint **No Source Configured** in the middle of the screen. What bounces around it, and what happens if you watch it long enough, is left for you to find.
 
-Displays showing the same video are started together but aren't frame-locked: separate players drift by a frame or two over a long clip. Side by side you're unlikely to notice; if it ever matters, the fix is `AVPlayer.setRate(_:time:atHostTime:)` against a common clock.
+### Photos
 
-With more than one display connected, the menu bar icon's menu also lists a **Play on \<display name\>** row for each one, between Play Now and Suspend/Resume, ordered by name. Choosing one turns just that display into a piece of art — a folder of photos, a film, a stream — while every other display and app carries on exactly as it was. It does not take keyboard focus, does not hide the cursor anywhere but over its own pixels, and does not respond to the idle timeout at all: it runs until you end it yourself, either from the same menu (now reading **Stop \<display name\>**) or with a single click anywhere on that display. Moving the pointer across it, typing, or clicking somewhere else has no effect.
+Photos in a source folder join the playlist alongside the videos, and each is held for a few seconds (8 by default) before the next lands. What a folder of them looks like is described in [The photo desk](#the-photo-desk).
 
-If "Displays have separate Spaces" is off in System Settings → Desktop & Dock, your main display has no row. It then holds the only menu bar and the Dock, and a single-screen window would cover both for every app until you clicked it away. With that setting on, every display has its own menu bar, and any of them can play.
-
-Ending it never locks the screen, regardless of the "Lock screen when dismissed" setting in Dismiss — that toggle means stepping away from the whole Mac, which isn't what clicking a spare monitor playing something ornamental means.
-
-Anything that covers a single-screen window ends it, and nothing brings it back: start it again from the menu. The ordinary, all-displays saver — by idle, by Play Now, or by its own hotkey — stops every single-screen window first rather than leaving two independent players fighting over the same display. If macOS's own screen saver starts, the display sleeps, or the screen locks, a single-screen window pauses in place along with everything else and ends once that's over — see **Idle timeout vs. macOS's own timers** below.
-
-Whether a single-screen window carries sound at all is its own setting — see **Sound** below.
-
-### Sound
-
-Off by default — a screensaver that starts talking to an empty room is nobody's friend. Settings → Playback → "Play sound" has three choices:
-
-- **Never** — silent, always.
-- **All displays** — sound on the main display only, while the ordinary, synced saver plays (by idle, Play Now, or its hotkey). Every display runs its own playback, so sound on more than one would mean the same soundtrack two or three times over, a few frames apart.
-- **All displays and one single screen** — everything the option above does, plus sound on the *first* single-screen "art mode" session you start (see **Multiple displays** above), whichever display that turns out to be. Starting a second one while the first still has sound leaves the second silent, for the same overlap reason.
+- **Any image type macOS recognises** counts — JPEG, PNG, HEIC, TIFF, camera RAW. Rather than a list of extensions, the file's actual type is asked of the system, so a format added to macOS in future works without a change here. PDFs and SVGs aren't images by that test, and aren't played.
+- **Orientation is honoured.** A phone photo with an EXIF rotation tag is shown upright rather than on its side.
+- **The photo's own title** is used for the on-screen caption when its IPTC or TIFF fields carry one, and its copyright line likewise. Otherwise the filename, exactly as for a video.
+- **Turn photos off** if your film folders have cover art or downloaded posters in them that you'd rather not see as slides. A file you picked by hand is always played whichever kind it is — you chose that exact file.
 
 ### Titles
 
@@ -244,36 +201,65 @@ The text is the video's **own embedded title** when the file carries one, and it
 
 Captions are drawn with a soft shadow, because a video screensaver can't know what it's drawing over and white-on-white is otherwise a real possibility on the wrong shot.
 
-### Idle timeout vs. macOS's own timers
+### Activation
+
+The idle timeout in minutes (5 by default), a global **Play now** hotkey (a shortcut can be cleared as well as changed), and a **Suspended** toggle that mirrors the menu bar's Suspend/Resume item.
+
+#### Idle timeout vs. macOS's own timers
 
 Save Cannes waits for its own idle timeout. macOS keeps two idle clocks of its own in System Settings: **Start Screen Saver when inactive**, and **Turn display off when inactive** (on a laptop, one for battery and one for the power adapter). Whichever of those fires first wins. If it fires before Save Cannes' idle timeout, the screen is already showing macOS's screen saver or has gone dark, and Save Cannes does not start into either.
 
 The display-off timer is the one people miss. On battery, a laptop often turns its display off after two minutes, which is sooner than Save Cannes' default of five. When a macOS timer is at or under the idle timeout, Settings says so in orange under the idle timeout and names the System Settings row to change. Set **Start Screen Saver when inactive** to **Never** (Save Cannes is your screen saver now), or give the display-off timer more time than the idle timeout.
 
-While Save Cannes is playing, it stops when something covers it: the lock screen (whether Save Cannes locked it, or you chose Lock Now, closed the lid or used a hot corner), macOS's own screen saver, or the display going to sleep. The picture and the sound stop, and nothing plays behind the lock screen. When you come back, Save Cannes is dismissed as usual, and if **Lock screen when dismissed** is on, the Mac locks first. A single-screen window is ended instead, and never locks the Mac.
+### Dismiss
 
-### If a video wedges
+- **Auto dismiss after** — a timeout in minutes (0 = never), so a single activation can't run unattended for hours or days. When it fires, the saver dismisses itself — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac.
+- **Lock screen when dismissed** — locks the Mac as the saver goes. It needs no permission.
 
-Left alone, every video plays from beginning to end; the only things that cut one short are your own input, waking or unlocking the Mac, and a display being added, removed or reconfigured (which rebuilds the windows and restarts playback).
+### Capture
 
-Behind that there's a watchdog, for the one case that would otherwise leave you looking at a still frame indefinitely: a file that plays but never reports that it finished. Twice a minute the watchdog compares the playhead against where it was, and steps in only when the picture has genuinely stopped —
+A global hotkey to save the current frame to `~/Pictures/Save Cannes/`. See [Screenshots](#screenshots).
 
-- **parked at the end** for four seconds with no end-of-play notification, or
-- **frozen anywhere** for thirty seconds while the player still believes it's playing.
+### General
 
-Both thresholds are deliberately unhurried. A file on a sleeping external drive or a network volume can legitimately stall for several seconds, and cutting a good film short would be a worse fault than the one being guarded against. A video we've paused ourselves — behind the lock screen — is never treated as stalled. In normal playback the watchdog never acts at all: it doesn't fire once across a full pass of a test folder, and no clip loses so much as a frame to it.
+**Launch at Login.**
 
-Interventions are logged, so if it ever does fire you can find out which file did it (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES`).
+## The photo desk
 
-### Screenshots
+A folder of photographs isn't shown as a slideshow. Each one arrives as a **paper print with a white border, thrown down onto a desk**, landing on top of whatever is already lying there — so what builds up over a few minutes is a pile, and the collection is the thing you're watching rather than any single picture in it.
 
-Set a hotkey under Settings → Capture and press it while the saver is playing. The frame is written to `~/Pictures/Save Cannes/` as a PNG.
+And then the trick. **The paper is dead still, and the picture inside it is not.** A print that has landed never moves again — but the image in its window drifts in and out of focus, carries the shake of a hand that isn't there, and every so often comes apart into blocks, or static, or a mess of compression, and puts itself back together. Prints are not supposed to do that, which is the point.
 
-The frame is pulled from the video file rather than grabbed off the screen, so you get the whole frame at the video's own resolution — a screenshot taken in "full screen" mode isn't cropped to the shape of whichever display it happened to be playing on.
+- **Only the newest print is alive.** As each new one comes down, the one it buries stops moving and loses its colour, so the pile beneath is monochrome and the picture on top is the only thing in the frame doing anything.
+- **Focus hunts rather than drifts** — it holds a distance, then racks quickly to another, the way a lens does when it can't make up its mind. Where the photo *has* a subject, the subject is held sharp and only the world behind it goes soft; where it hasn't, the whole picture drifts together.
+- **The shake is a knock, not a sway.** Nothing happens for a second or two, then the frame is jolted and settles. It shakes inside the paper's window: the print does not move with it.
+- **Reduce Motion** in System Settings → Accessibility is honoured. Prints still land and still pile up, because the collection is the point — but nothing shakes, hunts focus or comes apart, and they arrive without the fall.
 
-That also means a **live stream can't be captured**: there's no file to seek into. On-demand streams are fine.
+None of this is configurable, deliberately. It's what a folder of images does here.
 
-A **photo** is re-read from its own file at full size, so what lands in `~/Pictures/Save Cannes/` is the whole photograph rather than the display-sized, cropped, part-way-through-a-zoom version that was on screen.
+The subject is found on your Mac, with a depth model that ships inside the app; nothing is uploaded. On a Mac where the model can't be loaded, photographs still pile up on the desk and still shake and glitch; they just don't drift in and out of focus. How the subject is found is described in [ARCHITECTURE.md](ARCHITECTURE.md#how-the-desk-finds-a-subject).
+
+### Every photo in a folder, before the next film
+
+A folder of photographs is a **collection**, and it only reads as one if the whole folder goes past before something else starts. So the images in a directory are kept together as a run: once the first of them comes up, the rest follow, and only then does the next film play.
+
+In **random** order the runs are shuffled and the images *within* each run are shuffled too — which gives full coverage without repeats, because a shuffle is a selection without replacement. Every image in the folder is shown exactly once before any of them comes round again. In **sequential** order it's the same grouping in path order.
+
+Grouped by the directory each image actually sits in, rather than by the source you added, because a source pointed at a photo library is usually a tree of albums — and it's the album that's the collection.
+
+## Privacy
+
+- **No telemetry.** No usage reporting, no log file at all unless you explicitly turn one on (see below), no network requests beyond Sparkle's appcast fetch.
+- **No camera, microphone, or screen recording.** Your videos are read from the folder you chose and played locally. Nothing is copied, indexed, or uploaded.
+- **Photographs are examined on your Mac.** The desk effect asks Vision where a photograph's subject is and runs a Core ML depth model over it, both entirely locally, on the machine, against files you pointed the app at. The model ships inside the app; no photograph, and nothing derived from one, leaves the Mac or touches the network.
+- **Permissions:** if the folder you choose lives in Desktop, Documents, Downloads, or on an external drive, macOS will ask you to allow access the first time. Save Cannes triggers that prompt at the moment you pick the folder — while you're looking at Settings — rather than later from behind a fullscreen saver where you couldn't see it. Nothing else is asked for: locking the screen needs no permission.
+- **Logging** is off by default. To turn it on:
+
+  ```sh
+  defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES
+  ```
+
+  Timestamped lifecycle lines then go to `~/Library/Logs/Save Cannes/savecannes.log`, including every skipped file with the reason AVFoundation gave, and every time the stall watchdog moves on.
 
 ## Auto-update
 
@@ -281,23 +267,35 @@ Save Cannes uses [Sparkle 2.x](https://sparkle-project.org/) for auto-update. Up
 
 Updates are EdDSA-signed; your copy will only install genuine Jorvik Software releases.
 
-## Privacy
+## Troubleshooting
 
-- **No telemetry.** No usage reporting, no log file at all unless you explicitly turn one on (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES` writes timestamped lifecycle lines to `~/Library/Logs/Save Cannes/savecannes.log`; off by default), no network requests beyond Sparkle's appcast fetch.
-- **No camera, microphone, or screen recording.** Your videos are read from the folder you chose and played locally. Nothing is copied, indexed, or uploaded.
-- **Photographs are examined on your Mac.** The desk effect asks Vision where a photograph's subject is and runs a Core ML depth model over it, both entirely locally, on the machine, against files you pointed the app at. The model ships inside the app; no photograph, and nothing derived from one, leaves the Mac or touches the network.
-- **Permissions:** if the folder you choose lives in Desktop, Documents, Downloads, or on an external drive, macOS will ask you to allow access the first time. Save Cannes triggers that prompt at the moment you pick the folder — while you're looking at Settings — rather than later from behind a fullscreen saver where you couldn't see it. Accessibility is requested only if you enable "Lock screen when dismissed". The Permissions row in Settings follows the switch in System Settings as you flip it, without needing the window closed and reopened — about a second and a half behind, which is how long macOS takes to commit the change and be willing to admit it.
+Several of these ask you to turn logging on; the command is under [Privacy](#privacy).
 
-## Architecture
+**Nothing plays, and the screen says "No video sources yet".** Open Settings → Sources and add a folder, a file or a stream.
 
-- **App** (`App/`) — the lifecycle (`AppDelegate`), the fullscreen window per display (`ScreensaverWindow`), the playback surface (`VideoStage`), the source list and its storage (`VideoSource`), source resolution and run grouping (`VideoLibrary`), the title caption (`TitleOverlay`), status menu, settings window, Carbon hotkeys, lock-screen and screenshot integration, and the Accessibility permission watcher (`AccessibilityWatcher`).
-- **The desk** (`App/PhotoDesk*.swift`, `App/PhotoDepth.swift`, `App/PhotoFocus.swift`) — what a folder of photographs does: the look and the motion model, the Metal shaders, the desk surface and its canvas, monocular depth and the subject-certainty gate, and Vision's attention point. `Resources/DepthAnythingV2Small.mlmodelc` is the depth model, Apache 2.0, shipped compiled.
-- **JorvikKit** (`App/JorvikKit/`) — vendored shared components from the Jorvik suite (About modal, Settings frame, shortcut recorder, Sparkle focus guard, localisation shim, window helper).
-- **Sparkle** (`Sparkle.framework`) — vendored 2.9.1 binary, embedded under `Contents/Frameworks/`.
+**A stream won't play.** Paste the URL into Safari or QuickTime Player — if they can't play it either, it isn't a media URL, and Save Cannes hands URLs to the same underlying player. A page that *shows* a video is not the same as the video's own address.
 
-Playback is `AVPlayer` into an `AVPlayerLayer`, one per display, walking a playlist read fresh on every activation — folders walked then, so adding files takes effect next time the saver comes up. A stream is the same `AVPlayerItem` with a remote URL, which is why streams cost almost no extra code: the skip-on-failure path, the watchdog and the ordering all treat them like anything else. Whether displays match is a matter of which list they walk: one shared array, ordered once at activation, or one array per display. (Sharing a single `AVPlayer` across layers isn't an option — only the most recently created `AVPlayerLayer` renders.) Whether the per-display option is available at all is one property, `PlaybackOrder.allowsDifferentVideoPerDisplay`, read by both the engine and the Settings toggle so they can't disagree. The three size options are two `videoGravity` values plus, for original size, a layer frame computed from the video's pixel dimensions divided by the display's backing scale.
+**Everything is switched off.** The saver says so explicitly rather than claiming there are no videos, because those need different fixes.
 
-"Screensaver delivered as a regular `.app`" is the default shape for Jorvik screensavers, established by [Rainy Day](https://jorviksoftware.cc/screensavers/rainyday) and followed by [ASCII Saver](https://jorviksoftware.cc/screensavers/asciisaver).
+**The folder is right but it says no videos were found.** Save Cannes lists files by type, not by extension. If the files aren't recognised as movies by macOS — check one in Finder's Get Info — they won't be listed. An external drive that isn't mounted looks the same as an empty folder.
+
+**It skips a file I know plays in QuickTime.** Then it isn't skipping it for the reason you think. Turn logging on, let the saver run, and read `~/Library/Logs/Save Cannes/savecannes.log` — every skip is logged with the reason AVFoundation gave.
+
+**It never comes on, even after sitting idle for ages.** Look under the idle timeout in Settings → Activation. An orange note there means one of macOS's own timers fires first every time. See [Idle timeout vs. macOS's own timers](#idle-timeout-vs-macoss-own-timers).
+
+**The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
+
+**I don't want it to activate for a while.** Choose **Suspend** from the menu bar icon. See [Suspending it](#suspending-it).
+
+**It's been running for hours and nobody's there.** Set Settings → Dismiss → "Auto dismiss after" to a number of minutes. With "Lock screen when dismissed" on, this stops decoding and playback immediately, which is most of what you're after — but the player itself isn't fully released until the Mac is actually unlocked, same as a manual dismiss with that toggle on.
+
+**No sound.** Check Settings → Playback → "Play sound". With multiple displays the soundtrack plays on the main display's copy only, and a single-screen window has sound only with **All displays and one single screen**, and then only the first one you start.
+
+**A video seems to end early.** A watchdog moves on from a video whose playhead has genuinely stopped, so a wedged file can't leave a frozen frame up all night. Turn logging on and look for `watchdog:` lines — it names the moment it acted. If there are no such lines, the file ended where it says it ends; check its duration in Finder's Get Info.
+
+## How it works
+
+Why Save Cannes is an app rather than a `.saver`, how the code is laid out, the playback engine, the stall watchdog and how the photo desk finds a subject are all in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Building from Source
 
@@ -324,30 +322,6 @@ Other targets:
 - **[Rainy Day](https://jorviksoftware.cc/screensavers/rainyday)** — raindrops gather on a pane of glass and slip down it, refracting the photograph behind them. The app that established this shape.
 - **[ASCII Saver](https://jorviksoftware.cc/screensavers/asciisaver)** — your live camera feed rendered as ASCII art, in classic, Matrix, amber, raw and silhouette modes.
 - **[Reverie](https://jorviksoftware.cc/screensavers/reverie)** — roulette curves drawn progressively in dark ink over an animated wavescape. Still a `.saver` bundle, and rightly so: it needs no permission for anything, so it has no reason to be an app.
-
-## Troubleshooting
-
-**Nothing plays, and the screen says "No video source chosen".** Open Settings → Sources and add a folder, a file or a stream.
-
-**A stream won't play.** Paste the URL into Safari or QuickTime Player — if they can't play it either, it isn't a media URL, and Save Cannes hands URLs to the same underlying player. A page that *shows* a video is not the same as the video's own address.
-
-**Everything is switched off.** The saver says so explicitly rather than claiming there are no videos, because those need different fixes.
-
-**The folder is right but it says no videos were found.** Save Cannes lists files by type, not by extension. If the files aren't recognised as movies by macOS — check one in Finder's Get Info — they won't be listed. An external drive that isn't mounted looks the same as an empty folder.
-
-**It skips a file I know plays in QuickTime.** Then it isn't skipping it for the reason you think. Turn logging on (`defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES`), let the saver run, and read `~/Library/Logs/Save Cannes/savecannes.log` — every skip is logged with the reason AVFoundation gave.
-
-**It never comes on, even after sitting idle for ages.** Look under the idle timeout in Settings → Activation. An orange note there means one of macOS's own timers fires first every time. See [Idle timeout vs. macOS's own timers](#idle-timeout-vs-macoss-own-timers).
-
-**The saver comes up the moment I log in.** It shouldn't: activation is suppressed for 30 seconds after any wake or unlock, because system idle time keeps counting while the Mac is asleep. If you see it anyway, the log will show the wake event that was — or wasn't — received.
-
-**I don't want it to activate for a while.** Click the menu bar icon and choose **Suspend** — the icon changes to show it's off, and it stays that way, even across a relaunch, until you choose **Resume**. **Play Now** — from the menu or its keyboard shortcut — still triggers the saver regardless.
-
-**It's been running for hours and nobody's there.** Set Settings → Dismiss → "Auto dismiss after" to a number of minutes: a single activation then dismisses itself after that long — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac. With "Lock screen when dismissed" on, this stops decoding and playback immediately, which is most of what you're after — but the player itself isn't fully released until the Mac is actually unlocked, same as a manual dismiss with that toggle on.
-
-**No sound.** Check Settings → Playback → "Play sound". With multiple displays the soundtrack plays on the main display's copy only, and a single-screen window has sound only with **All displays and one single screen**, and then only the first one you start.
-
-**A video seems to end early.** Turn logging on and look for `watchdog:` lines — the watchdog only moves on when the playhead has genuinely stopped, and it names the moment it did. If there are no such lines, the file ended where it says it ends; check its duration in Finder's Get Info.
 
 ---
 
