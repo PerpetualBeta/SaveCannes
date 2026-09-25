@@ -816,6 +816,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // screen sits above `.screenSaver` level, so it provably covers our
             // windows the moment it's up.
             scLog("dismiss with lock — pausing on screenIsLocked, teardown deferred to unlock")
+            // Pause now, not when the lock confirms. The lock screen normally
+            // covers us in 0.1 to 0.4s, but under load it has taken over 4s,
+            // and all that time the film carried on as if the key press had not
+            // been heard. A still frame answers the input at once.
+            pausePlayback(reason: "dismissed, waiting for the lock screen")
             observeLockThenPause()
             LockScreen.lock()
         } else {
@@ -848,6 +853,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.cleanupLockObserver()
+            // Playback paused when the saver was dismissed, so the permanent
+            // observer logs nothing now. This line keeps the lock's latency
+            // readable in the log.
+            scLog("screenIsLocked received — the lock screen is up")
         }
         // Safety net: if no lock notification arrives (SACLockScreenImmediate
         // failed, loginwindow hung, symbol removed in a future macOS — whatever

@@ -214,7 +214,7 @@ The display-off timer is the one people miss. On battery, a laptop often turns i
 ### Dismiss
 
 - **Auto dismiss after** — a timeout in minutes (0 = never), so a single activation can't run unattended for hours or days. When it fires, the saver dismisses itself — locking the screen first if that's turned on too — and won't start itself back up until you actually touch the Mac.
-- **Lock screen when dismissed** — locks the Mac as the saver goes. It needs no permission.
+- **Lock screen when dismissed** — locks the Mac as the saver goes. The picture and sound stop the moment you dismiss it, and the still picture stays until the lock screen covers it. It needs no permission.
 
 ### Capture
 
