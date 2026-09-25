@@ -251,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.hotkeyManager.setRecordingSuspended(recording)
         }
         startIdlePolling()
+        observeFocusLoss()
         // Re-evaluate windows when displays connect/disconnect/reconfigure
         // (new monitor plugged in mid-screensaver, etc.).
         screenChangeObserver = NotificationCenter.default.addObserver(
@@ -676,6 +677,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 showWindows()
             }
         } else if idle < 1.0 && Date() >= dismissAllowedAfter {
+            // A lock is already on its way. Stay quiet: while the saver is up
+            // this runs ten times a second.
+            guard !lockDismissInProgress else { return }
             // The windows' own event monitor ignores pointer movement until
             // the pointer has come to rest, because movement that follows
             // through from the click or keystroke which STARTED the saver is
@@ -707,6 +711,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             autoDismissTriggered = true
             autoDismissSuppressed = true
             dismissWindows(triggerLock: lockOnDismiss)
+        }
+    }
+
+    // MARK: - Hardening while the saver is up
+
+    /// With lock on dismiss on, the Mac is still UNLOCKED while the saver is
+    /// up: the lock only begins when it is dismissed. Nothing third-party can
+    /// draw above loginwindow's lock screen, so the saver cannot be the lock.
+    /// What it can do is make the time between any input and the lock as short
+    /// as possible, and keep that input from reaching the apps behind it.
+    ///
+    /// Measured 2026-09-25 on Rainy Day. The saver's own window never sees
+    /// command-Tab or another app's global shortcut, so only the once-a-second
+    /// idle tick caught them: up to 1s, plus the lock screen's own 0.12 to
+    /// 0.17s. Kiosk mode hid the app switcher, but command-Tab still switched
+    /// app in 1 run of 5, 0.66s before the tick locked. With all three
+    /// measures below, every input was followed by a lock request within 0.1s.
+    ///
+    /// What is left, and cannot be closed from here: the lock screen's own
+    /// latency, and another app's global shortcut, which runs once before the
+    /// lock lands. The only complete answer is macOS's lock itself.
+    private static let saverUpPollSeconds: TimeInterval = 0.1
+    /// Kiosk mode (Apple's technical note "Kiosk Mode"): no app switcher,
+    /// Mission Control, force quit panel or power key panel, no Dock, menu bar
+    /// or Apple menu. It only holds while this app is active, which the saver
+    /// makes it.
+    private static let kioskOptions: NSApplication.PresentationOptions = [
+        .hideDock, .hideMenuBar, .disableProcessSwitching, .disableForceQuit,
+        .disableSessionTermination, .disableHideApplication, .disableAppleMenu,
+    ]
+    private var saverUpTimer: Timer?
+    private var hardenedWhileUp = false
+
+    /// Only with lock on dismiss. Without it the saver is a picture over an
+    /// unlocked Mac by the user's own choice, and fencing the Mac in would buy
+    /// nothing.
+    private func hardenWhileUp() {
+        guard lockOnDismiss, !hardenedWhileUp else { return }
+        hardenedWhileUp = true
+        NSApp.presentationOptions = Self.kioskOptions
+        // The 1s idle tick is the only thing that sees input the saver's own
+        // window does not. Run it ten times as often while the saver is up.
+        saverUpTimer = Timer.scheduledTimer(withTimeInterval: Self.saverUpPollSeconds, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+        scLog("hardened while up: kiosk mode on, input checked every \(Self.saverUpPollSeconds)s, losing focus locks")
+    }
+
+    private func unhardenAfterUp() {
+        guard hardenedWhileUp else { return }
+        hardenedWhileUp = false
+        NSApp.presentationOptions = []
+        saverUpTimer?.invalidate()
+        saverUpTimer = nil
+    }
+
+    /// Anything that takes focus from the saver while it is hardened, such as
+    /// command-Tab getting past kiosk mode, would otherwise go unanswered
+    /// until the next idle poll. loginwindow taking focus IS the lock
+    /// arriving, so that is left alone, as is a lock already under way.
+    private func observeFocusLoss() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.hardenedWhileUp, !self.windows.isEmpty else { return }
+            let front = NSWorkspace.shared.frontmostApplication
+            if front?.bundleIdentifier == "com.apple.loginwindow" || LockScreen.screenIsLocked
+                || self.lockDismissInProgress || self.playbackPaused { return }
+            scLog("the saver lost focus to \(front?.localizedName ?? "another app") — locking now")
+            self.dismissWindows(triggerLock: true)
         }
     }
 
@@ -782,6 +856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         builtForLayout = Self.screenLayoutSignature()
         scLog("showed \(windows.count) screensaver window(s) for layout \(builtForLayout ?? "?")")
+        hardenWhileUp()
     }
 
     /// True between the first `dismissWindows(triggerLock:true)` call and the
@@ -893,6 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupLockObserver()
         for win in windows { win.deactivate() }
         windows.removeAll()
+        unhardenAfterUp()
         // Clear the re-entry guards so the next dismiss cycle can lock again,
         // and so a future auto-dismiss trigger can fire again.
         lockDismissInProgress = false
