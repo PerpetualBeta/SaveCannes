@@ -54,7 +54,7 @@ When you've been idle past your configured threshold, Save Cannes covers every d
 
 **Play Now**, from the menu bar icon or its keyboard shortcut (set in [Activation](#activation)), starts it immediately.
 
-Left alone, every video plays from beginning to end; the only things that cut one short are your own input, waking or unlocking the Mac, and a display being added, removed or reconfigured (which rebuilds the windows and restarts playback).
+Left alone, every video plays from beginning to end; the only things that cut one short are your own input, waking or unlocking the Mac, and a display being added, removed or reconfigured (which rebuilds the windows and restarts playback; the saver keeps focus while it does, so the change does not lock the Mac).
 
 To stop a single activation running unattended for hours, or to lock the Mac when the saver goes, see [Dismiss](#dismiss).
 
@@ -259,7 +259,7 @@ Grouped by the directory each image actually sits in, rather than by the source 
   defaults write cc.jorviksoftware.SaveCannes debugLogging -bool YES
   ```
 
-  Timestamped lifecycle lines then go to `~/Library/Logs/Save Cannes/savecannes.log`, including every skipped file with the reason AVFoundation gave, and every time the stall watchdog moves on.
+  Timestamped lifecycle lines then go to `~/Library/Logs/Save Cannes/savecannes.log` (rotated at 4 MB to `savecannes.log.1`), including every skipped file with the reason AVFoundation gave, and every time the stall watchdog moves on.
 
 ## Auto-update
 
