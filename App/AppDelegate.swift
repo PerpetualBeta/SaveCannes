@@ -129,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// without this the condition re-evaluates true every second for as long
     /// as that takes, re-logging and re-calling `dismissWindows` (harmlessly
     /// absorbed by `lockDismissInProgress`, but pure log spam — potentially
-    /// for hours). Reset in `tearDownWindows()`, alongside
+    /// for hours). Reset in `tearDownWindows()` and `replaceWindows()`, alongside
     /// `lockDismissInProgress`, which guards the same kind of re-entry one
     /// level down.
     private var autoDismissTriggered = false
@@ -801,9 +801,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // this cover is treated the same way. One rule for every cover.
         for id in Array(singleScreenWindows.keys) { stopSingleScreen(id: id) }
         // Only start the clock on a genuine new activation. A rebuild
-        // (handleScreenChange, via tearDownWindows(isRebuild: true)) leaves
-        // activatedAt already set — preserve it rather than restarting the
-        // auto-dismiss timeout on a display-layout change mid-activation.
+        // (handleScreenChange, via replaceWindows()) leaves activatedAt
+        // already set — preserve it rather than restarting the auto-dismiss
+        // timeout on a display-layout change mid-activation.
         if activatedAt == nil { activatedAt = Date() }
         // Suppress idle-driven auto-dismiss briefly after activation. Without
         // this, hotkey/menu activations would be killed by their own user
@@ -961,7 +961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func tearDownWindows(isRebuild: Bool = false) {
+    private func tearDownWindows() {
         // A teardown ends the dismiss this handshake belonged to, so the
         // observer has nothing left to hear. Leaving it armed let a wake
         // arriving mid-handshake orphan it rather than cancel it.
@@ -976,18 +976,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dismissHeldUnarmed = false
         playbackPaused = false
         builtForLayout = nil
-        // A rebuild (handleScreenChange tearing down only to immediately call
-        // showWindows() again on an actual display-layout change) is not a
-        // new activation — some DisplayPort setups drop a sleeping display
-        // out of NSScreen.screens entirely, which is exactly the event
-        // guaranteed to happen on the unattended-overnight Mac this timeout
-        // exists to bound. Restarting the clock there would silently defeat
-        // it. Only a genuine dismiss clears activatedAt; showWindows() only
-        // sets it when it finds nil, so a preserved value here survives the
-        // rebuild untouched.
-        if !isRebuild {
-            activatedAt = nil
-        }
+        // Only a genuine dismiss comes here, so the activation is over. A
+        // rebuild does not tear down: replaceWindows() keeps the clock.
+        activatedAt = nil
         scLog("dismissed screensaver windows")
     }
 
@@ -1169,13 +1160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         scLog("display layout changed: \(builtForLayout ?? "none") → \(current) — recreating screensaver windows")
-        // Tear down directly rather than through dismissWindows(triggerLock:).
-        // A rebuild never locks, and routing it through the dismiss path only
-        // handed that path an isRebuild flag it silently ignored on its
-        // locking branch. The !windows.isEmpty guard dismissWindows applies is
-        // already made at the top of this method.
-        tearDownWindows(isRebuild: true)
-        showWindows()
+        replaceWindows()
         // showWindows() builds one window per NSScreen.screens entry and does
         // not insist on getting at least one. A rebuild that lands on no
         // screens at all would leave activatedAt set with no windows to go
@@ -1186,6 +1171,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // a second after appearing. Rebuilding onto nothing is not an
         // activation, so end the clock here.
         if windows.isEmpty { activatedAt = nil }
+    }
+
+    /// Rebuild the saver windows for a new display layout, showing the new
+    /// windows before the old ones go. The app always has a window up, so it
+    /// stays the active app and the hardening stays on throughout.
+    ///
+    /// Until 2026-10-05 a rebuild tore the old windows down first. For a moment
+    /// the app had no window, macOS made the next app active, and that
+    /// deactivation arrived after the new windows were up and hardened, so the
+    /// focus-loss observer locked the Mac although nobody had touched it. Rainy
+    /// Day did exactly that at 07:03 that day, when a display went to sleep
+    /// under it. The lock was not wrong: the other app really was in front of
+    /// the saver, with the keys. Not losing focus at all is the fix, not
+    /// ignoring the loss.
+    ///
+    /// Not a dismiss, so it resets the guards a teardown resets but leaves
+    /// `activatedAt` alone, and showWindows() keeps a clock it finds set. Some
+    /// DisplayPort setups drop a sleeping display out of NSScreen.screens
+    /// entirely, which is exactly the event guaranteed to happen on the
+    /// unattended-overnight Mac the auto-dismiss timeout exists to bound.
+    /// Restarting the clock on a rebuild would silently defeat it.
+    private func replaceWindows() {
+        let old = windows
+        windows.removeAll()
+        lockDismissInProgress = false
+        autoDismissTriggered = false
+        dismissHeldUnarmed = false
+        showWindows()
+        // Each old window shows the cursor once, matching the hide it made in
+        // activate(); the new windows have hidden it again, so the count holds.
+        for win in old { win.deactivate() }
+        scLog("replaced \(old.count) screensaver window(s) with \(windows.count), the new ones shown first")
     }
 
     // MARK: - Status item visibility
