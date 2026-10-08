@@ -50,7 +50,7 @@ brew uninstall --cask perpetualbeta/jorvik/savecannes
 
 ### Starting and stopping
 
-When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss. If you started it yourself, from the menu or a shortcut, it waits for the pointer to stop before it treats movement as a dismiss, so carrying on to move your hand away doesn't close what you just opened.
+When you've been idle past your configured threshold, Save Cannes covers every display with black and starts playing. Move the mouse or press any key to dismiss. The exceptions are the volume and mute keys, so you can turn the sound down, or off, without ending it. If you started it yourself, from the menu or a shortcut, it waits for the pointer to stop before it treats movement as a dismiss, so carrying on to move your hand away doesn't close what you just opened.
 
 **Play Now**, from the menu bar icon or its keyboard shortcut (set in [Activation](#activation)), starts it immediately.
 

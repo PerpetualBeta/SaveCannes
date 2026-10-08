@@ -214,6 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: Self.registeredDefaults)
         migrateSoundModeIfNeeded()
         installEditMenu()
+        // So that turning the sound down does not end the saver.
+        VolumeKeys.shared.start()
         scLog("applicationDidFinishLaunching — idle threshold \(Int(idleThresholdSeconds))s, auto dismiss \(autoDismissSeconds > 0 ? "\(Int(autoDismissSeconds / 60))min" : "unlimited")"
               + (activationSuspended ? ", activation SUSPENDED from a previous session" : ""))
         // Whether this process is trusted, recorded at launch. Worth having: the answer
@@ -786,8 +788,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func systemIdleSeconds() -> Double {
         let anyEvent = CGEventType(rawValue: ~UInt32(0)) ?? .null
-        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyEvent)
+        let any = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyEvent)
+        // While the saver is up, a volume or mute key is not input that ends
+        // it: see VolumeKeys. When the latest system-defined event was one,
+        // the answer is the idle time of every other kind of event, so any
+        // other input, before or after the press, still counts.
+        guard !windows.isEmpty else { return any }
+        let systemDefined = CGEventSource.secondsSinceLastEventType(
+            .combinedSessionState, eventType: Self.systemDefinedEventType)
+        guard VolumeKeys.shared.explainsSystemDefinedEvent(secondsAgo: systemDefined) else {
+            volumeKeyLogged = false
+            return any
+        }
+        let others = Self.everyOtherEventType.map {
+            CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0)
+        }.min() ?? any
+        if systemDefined < 1.0, others >= 1.0, !volumeKeyLogged {
+            volumeKeyLogged = true
+            scLog("volume key while up — not dismissing")
+        }
+        return others
     }
+
+    /// `NX_SYSDEFINED`, the event type media keys arrive as. CoreGraphics
+    /// has no case for it.
+    private static let systemDefinedEventType = CGEventType(rawValue: 14) ?? .null
+
+    /// Every event type except system-defined, by number rather than by name.
+    /// CoreGraphics names only some of them: trackpad gestures and the rest
+    /// have numbers and no case, and a named list that missed one would let
+    /// that input past the saver once a volume key had been pressed.
+    ///
+    /// **Below 32, and that limit is measured.** The idle reading treats a type
+    /// as a bit in a 32-bit mask, so it answers 32 and above as "any event".
+    /// With the range running to 63, a volume press read 0.055s old on 14 and
+    /// on every type from 32 to 63 alike, so leaving 14 out changed nothing and
+    /// the press still dismissed (2026-10-08). Every input type is below 32.
+    private static let everyOtherEventType: [CGEventType] = (1..<32)
+        .filter { $0 != 14 }
+        .compactMap { CGEventType(rawValue: UInt32($0)) }
+
+    /// One log line per run of volume presses, not one per tick.
+    private var volumeKeyLogged = false
 
     // MARK: - Window management
 

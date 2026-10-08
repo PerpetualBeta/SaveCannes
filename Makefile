@@ -30,7 +30,7 @@ SWIFT_FRAMEWORKS := Cocoa AVFoundation CoreMedia CoreGraphics QuartzCore \
                     UniformTypeIdentifiers ServiceManagement Carbon \
                     Vision CoreVideo Metal CoreML Accelerate
 
-SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift \
+SWIFT_SOURCES    := App/main.swift App/AppDelegate.swift App/VolumeKeys.swift \
                     App/ScreensaverWindow.swift \
                     App/VideoStage.swift App/VideoLibrary.swift App/VideoSource.swift App/DisplayProfile.swift \
                     App/NoticeDrift.swift App/DVDLogo.swift App/DVDLogoPath.swift \
