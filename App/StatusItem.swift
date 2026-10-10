@@ -228,7 +228,17 @@ final class StatusItem: NSObject, NSMenuDelegate {
         JorvikAboutView.showWindow(
             appName: "Save Cannes",
             repoName: "SaveCannes",
-            productPage: "screensavers/savecannes"
+            productPage: "screensavers/savecannes",
+            credits: [
+                JorvikCredit(
+                    name: "Christophe Bouhon",
+                    contribution: L10n.string(
+                        "credits.christophe",
+                        defaultValue: "per-display playback, auto dismiss, art mode, suspend and resume, the idle-timeout warning; and many other ideas"
+                    ),
+                    url: URL(string: "https://github.com/christobaldo")
+                )
+            ]
         )
     }
 

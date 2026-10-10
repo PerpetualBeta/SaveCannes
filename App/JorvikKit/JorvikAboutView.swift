@@ -1,9 +1,25 @@
 import SwiftUI
 
+/// One external contribution acknowledged in the About window. The
+/// contribution is a short summary of what they added, semicolon-joined
+/// when there are several: "notification overlay; Simplified Chinese".
+struct JorvikCredit: Hashable {
+    let name: String
+    let contribution: String
+    let url: URL?
+
+    init(name: String, contribution: String, url: URL? = nil) {
+        self.name = name
+        self.contribution = contribution
+        self.url = url
+    }
+}
+
 struct JorvikAboutView: View {
     let appName: String
     let repoName: String
     let productPage: String?
+    let credits: [JorvikCredit]
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -45,6 +61,40 @@ struct JorvikAboutView: View {
                     .multilineTextAlignment(.center)
             }
 
+            if !credits.isEmpty {
+                Divider()
+                    .padding(.horizontal, 40)
+
+                VStack(spacing: 6) {
+                    Text(L10n.string(
+                        "about.contributors",
+                        defaultValue: "With contributions from"
+                    ))
+                        .font(.caption)
+                        .fontWeight(.medium)
+
+                    ForEach(credits, id: \.self) { credit in
+                        VStack(spacing: 1) {
+                            if let url = credit.url {
+                                Link(credit.name, destination: url)
+                                    .font(.caption)
+                            } else {
+                                Text(credit.name)
+                                    .font(.caption)
+                            }
+                            Text(credit.contribution)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                // Claim vertical space to wrap within the fixed
+                                // window width — without this, fittingSize lets
+                                // the line truncate instead of growing downward.
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
             HStack(spacing: 16) {
                 Link(
                     L10n.string("about.source_code", defaultValue: "Source Code"),
@@ -75,7 +125,12 @@ struct JorvikAboutView: View {
     /// object alive after the user closes it; we just re-show.
     private static var existingWindow: NSWindow?
 
-    static func showWindow(appName: String, repoName: String, productPage: String? = nil) {
+    static func showWindow(
+        appName: String,
+        repoName: String,
+        productPage: String? = nil,
+        credits: [JorvikCredit] = []
+    ) {
         if let window = existingWindow {
             // If the cached window is hidden, bring it to the active space so
             // the user isn't yanked to wherever it was last shown. If it's
@@ -98,7 +153,8 @@ struct JorvikAboutView: View {
         let controller = NSHostingController(rootView: JorvikAboutView(
             appName: appName,
             repoName: repoName,
-            productPage: productPage
+            productPage: productPage,
+            credits: credits
         ))
 
         controller.view.layoutSubtreeIfNeeded()
