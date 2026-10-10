@@ -317,6 +317,10 @@ Other targets:
 - `gmake icon` — regenerate the app icon from `generate_icon.swift`
 - `gmake release` — signed, notarised, stapled `.zip` and `.pkg` ready to ship
 
+## Acknowledgements
+
+[Christophe Bouhon](https://github.com/christobaldo) contributed per-display playback, auto dismiss, single-screen art mode, suspend and resume, and the idle-timeout warning, along with many other ideas.
+
 ## The other Jorvik screensavers
 
 - **[Rainy Day](https://jorviksoftware.cc/screensavers/rainyday)** — raindrops gather on a pane of glass and slip down it, refracting the photograph behind them. The app that established this shape.
